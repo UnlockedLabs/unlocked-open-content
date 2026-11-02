@@ -2,6 +2,7 @@ package opencontent
 
 import (
 	"context"
+	"database/sql"
 	"math"
 	"math/rand"
 	"time"
@@ -237,30 +238,24 @@ func (a openContentAPI) Interactions(ctx context.Context, w api.Window) (api.Int
 	return api.Interactions{Total: total, Unique: unique, Change: change}, nil
 }
 
+// AvgSessionMinutes is the average length of the window's visits that ended
+// after they started. The database averages them, so the answer never loads
+// the visits themselves, which over all time and every facility is the whole
+// table.
 func (a openContentAPI) AvgSessionMinutes(ctx context.Context, w api.Window) (float64, error) {
-	type sessionRow struct {
-		RequestTS time.Time
-		StopTS    time.Time
+	minutes := "EXTRACT(EPOCH FROM (stop_ts - request_ts)) / 60"
+	if a.db.Name() == "sqlite" {
+		// The tests' SQLite has no EXTRACT or intervals.
+		minutes = "(julianday(stop_ts) - julianday(request_ts)) * 1440"
 	}
-	rows := make([]sessionRow, 0)
+	var avg sql.NullFloat64
 	if err := a.kcActivityScope(ctx, w.Start, w.End, w.FacilityID).
-		Select("request_ts, stop_ts").
-		Where("stop_ts IS NOT NULL").
-		Find(&rows).Error; err != nil {
+		Select("AVG(" + minutes + ")").
+		Where("stop_ts > request_ts").
+		Scan(&avg).Error; err != nil {
 		return 0, err
 	}
-	var totalMinutes float64
-	var counted int
-	for _, row := range rows {
-		if row.StopTS.After(row.RequestTS) {
-			totalMinutes += row.StopTS.Sub(row.RequestTS).Minutes()
-			counted++
-		}
-	}
-	if counted == 0 {
-		return 0, nil
-	}
-	return totalMinutes / float64(counted), nil
+	return avg.Float64, nil
 }
 
 func (a openContentAPI) RepeatEngagement(ctx context.Context, w api.Window) (api.RepeatEngagement, error) {
