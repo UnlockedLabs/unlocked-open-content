@@ -35,13 +35,15 @@ func VersionFromEnv() Version {
 
 // NewHandler returns the API's routes, all under prefix: the path ingress
 // sends this product's requests to, such as "/example". An empty prefix
-// serves from the root. See cleanPrefix for what prefix may be.
-func NewHandler(prefix string, v Version) (http.Handler, error) {
+// serves from the root. See cleanPrefix for what prefix may be. app serves
+// every path but the healthcheck and the version.
+func NewHandler(prefix string, v Version, app http.Handler) (http.Handler, error) {
 	prefix, err := cleanPrefix(prefix)
 	if err != nil {
 		return nil, err
 	}
 	mux := http.NewServeMux()
+	mux.Handle("/", app)
 	// The platform chart's readiness probe. Same path and body as core's.
 	mux.HandleFunc("GET "+prefix+"/api/healthcheck", func(w http.ResponseWriter, r *http.Request) {
 		if _, err := w.Write([]byte("OK")); err != nil {
@@ -80,15 +82,16 @@ func cleanPrefix(prefix string) (string, error) {
 	return "/" + trimmed, nil
 }
 
-// Serve runs the API on addr until ctx is canceled, then shuts it down,
-// giving requests in flight up to 10 seconds to finish. A bad prefix or an
-// address it can't listen on is an error before it serves anything.
-func Serve(ctx context.Context, addr, prefix string, v Version) error {
+// Serve runs the API, with app's routes, on addr until ctx is canceled, then
+// shuts it down, giving requests in flight up to 10 seconds to finish. A bad
+// prefix or an address it can't listen on is an error before it serves
+// anything.
+func Serve(ctx context.Context, addr, prefix string, v Version, app http.Handler) error {
 	prefix, err := cleanPrefix(prefix)
 	if err != nil {
 		return err
 	}
-	handler, err := NewHandler(prefix, v)
+	handler, err := NewHandler(prefix, v, app)
 	if err != nil {
 		return err
 	}
