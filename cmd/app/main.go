@@ -28,7 +28,13 @@ func main() {
 	initLogging()
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	if err := run(ctx, os.Args[1:]); err != nil {
+	err := run(ctx, os.Args[1:])
+	// A stop while it waits for the migrations or the seed is a clean stop.
+	if ctx.Err() != nil && errors.Is(err, context.Canceled) {
+		log.Info("Stopped before it started")
+		return
+	}
+	if err != nil {
 		log.Error(err)
 		os.Exit(1)
 	}
