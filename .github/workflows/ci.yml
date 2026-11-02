@@ -1,0 +1,126 @@
+name: CI
+
+# Every push runs vet, the tests and golangci-lint. Pushes to main and release tags
+# also build the image and push it to ECR, which the cluster pulls from:
+#
+#   push to main  -> :sha-<short>, and :latest if it's still the tip of main
+#   tag vX.Y.Z    -> :X.Y.Z
+#
+# The ECR repository has the same name as this GitHub repository. The template
+# repository itself only tests: it has no ECR repository.
+on:
+  push:
+    branches: ['**']
+    tags: ['v*.*.*']
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: vet and test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - run: go vet ./...
+      - run: go test -race ./...
+
+  lint:
+    name: golangci-lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+        with:
+          version: v2.14.0
+
+  build-and-push:
+    needs: [test, lint]
+    if: >-
+      !github.event.repository.is_template &&
+      (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+    runs-on: ubuntu-latest
+    # No concurrency group: GitHub cancels a pending run when a newer one
+    # queues, and that commit would never get its :sha- image. Runs for two
+    # merges may finish in either order, so :latest moves in its own last step,
+    # and only to the tip of main.
+    permissions:
+      # Mints the OIDC token that configure-aws-credentials exchanges for the
+      # role. AWS_IAM_ROLE is a role ARN, not a credential: access comes from
+      # the role's trust policy naming this repository.
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set the image version
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            TAG="${GITHUB_REF#refs/tags/}"
+            # A pre-release suffix (v1.2.3-rc.1) is fine; build metadata
+            # (v1.2.3+x) isn't, because Docker tags can't contain "+".
+            if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+              echo "::error::tag '$TAG' is not a vMAJOR.MINOR.PATCH release tag, refusing to build a release image"
+              exit 1
+            fi
+            # GITHUB_REF_NAME is the tag here, not a branch.
+            {
+              echo "IMAGE_VERSION=${TAG#v}"
+              echo "IMAGE_GIT_BRANCH=unknown"
+            } >> "$GITHUB_ENV"
+          else
+            {
+              echo "IMAGE_VERSION=sha-${GITHUB_SHA::7}"
+              echo "IMAGE_GIT_BRANCH=$GITHUB_REF_NAME"
+            } >> "$GITHUB_ENV"
+          fi
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ secrets.AWS_IAM_ROLE }}
+          aws-region: us-west-2
+          mask-aws-account-id: true
+
+      - name: Log in to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@03f1aad4c6c7ffd436567f42f9384779290529bd # v2.1.7
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Build and push
+        env:
+          IMAGE: ${{ steps.login-ecr.outputs.registry }}/${{ github.event.repository.name }}
+        run: |
+          docker buildx build --platform linux/amd64 \
+            --build-arg APP_VERSION="$IMAGE_VERSION" \
+            --build-arg GIT_COMMIT="$GITHUB_SHA" \
+            --build-arg GIT_BRANCH="$IMAGE_GIT_BRANCH" \
+            --label "org.opencontainers.image.revision=$GITHUB_SHA" \
+            --label "org.opencontainers.image.version=$IMAGE_VERSION" \
+            --label "org.opencontainers.image.source=https://github.com/$GITHUB_REPOSITORY" \
+            -t "$IMAGE:$IMAGE_VERSION" --push .
+
+      # Checked right before tagging, so a run that finishes after a newer
+      # merge's run leaves :latest on the newer commit. If the newest commit's
+      # run fails, :latest stays on the last one that passed.
+      - name: Move :latest to this commit if it's still the tip of main
+        if: github.ref == 'refs/heads/main'
+        env:
+          IMAGE: ${{ steps.login-ecr.outputs.registry }}/${{ github.event.repository.name }}
+        run: |
+          # No pipe, so a failed ls-remote fails the step (run steps use bash -e
+          # without pipefail).
+          tip=$(git ls-remote --exit-code origin refs/heads/main)
+          tip=${tip%%$'\t'*}
+          if [[ "$tip" != "$GITHUB_SHA" ]]; then
+            echo "::notice::main has moved on to ${tip::7}, so :latest is left to that commit's run"
+            exit 0
+          fi
+          docker buildx imagetools create -t "$IMAGE:latest" "$IMAGE:$IMAGE_VERSION"

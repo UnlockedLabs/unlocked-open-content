@@ -1,0 +1,47 @@
+name: govulncheck
+
+# Checks the code, its dependencies and the Go version it builds with against
+# the Go vulnerability database. It runs on every push, and every Monday so main
+# is checked for vulnerabilities published since its last push. When main fails
+# and the repository can see a SLACK_WEBHOOK_URL secret, it posts to Slack.
+on:
+  push:
+    branches: ['**']
+  schedule:
+    - cron: '0 14 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  govulncheck:
+    name: govulncheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          # The Dockerfile's golang image has no patch number, so the image
+          # builds with the newest patch. Check that one, not an older one
+          # cached on the runner.
+          check-latest: true
+      - run: go install golang.org/x/vuln/cmd/govulncheck@v1.9.0
+      - run: '"$(go env GOPATH)/bin/govulncheck" ./...'
+
+      - name: Tell Slack
+        if: failure() && github.ref == 'refs/heads/main'
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          TEXT: >-
+            ${{ github.repository }}: govulncheck failed on main.
+            ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          if [[ -z "$SLACK_WEBHOOK_URL" ]]; then
+            echo "::notice::SLACK_WEBHOOK_URL isn't set, so nothing was posted to Slack"
+            exit 0
+          fi
+          jq -n --arg text "$TEXT" '{text: $text}' \
+            | curl --fail --silent --show-error --max-time 10 \
+                -H 'Content-Type: application/json' --data @- "$SLACK_WEBHOOK_URL"

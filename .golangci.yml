@@ -1,0 +1,11 @@
+version: "2"
+
+# golangci-lint's standard linters, as in unlocked-core, plus gofmt and
+# goimports.
+linters:
+  default: standard
+
+formatters:
+  enable:
+    - gofmt
+    - goimports

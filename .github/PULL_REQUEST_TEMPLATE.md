@@ -1,0 +1,30 @@
+## Pre-Submission PR Checklist
+
+- [ ] No debug/console/fmt.Println statements
+- [ ] Unnecessary development comments removed
+- [ ] All acceptance criteria verified
+- [ ] Functions according to **ticket specifications**
+- [ ] Tested manually where applicable
+- [ ] Branch rebased with latest main
+- [ ] No business logic exists within the database layer
+- [ ] DB migrations (if any) are backward-compatible and online-safe
+- [ ] PR title and every commit are conventional commits (`feat:`, `fix:`, `docs:`...); a squash merge lands under the PR title, and both become the changelog
+
+## Description of the change
+
+Please provide a brief description of the changes included in this PR.
+
+- **Related issues**: Link to related JIRA ticket that this closes.
+
+## Release
+
+- **Changelog type**: `feat` (minor bump), `fix`, `perf` or `revert` (patch bump), or none (`chore`, `docs`, `style`, `refactor`, `test`, `build`, `ci`). See "Commit types" in the README.
+- **Breaking change?**: yes / no. If yes, add `!` to the title (`feat!:`) and list what sites or other repos must change.
+
+## Additional context
+
+Please include additional context or information that the reviewer needs to understand the PR. This includes:
+
+- Known issues that the PR does not address
+- What areas to focus on
+- What decisions were considered and decided against.

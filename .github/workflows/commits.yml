@@ -1,0 +1,23 @@
+name: commits
+
+# release-please builds versions and the changelog from commit subjects, so
+# every commit must be a conventional commit.
+on: [push, pull_request]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: conventional
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: webiny/action-conventional-commits@8bc41ff4e7d423d56fa4905f6ff79209a78776c7 # v1.3.0
+        with:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Same types as pr-title.yml. The action's default also allows wip and
+          # merge, which release-please ignores. Git's own "Merge ..." and
+          # "Revert ..." messages are always allowed.
+          allowed-commit-types: "feat,fix,docs,style,refactor,test,build,perf,ci,chore,revert"
