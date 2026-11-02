@@ -1,6 +1,6 @@
 module github.com/UnlockedLabs/unlocked-open-content
 
-go 1.26.0
+go 1.26.10
 
 require (
 	github.com/UnlockedLabs/unlocked-contracts v0.2.2-0.20261102162834-63e7bd1f3289
