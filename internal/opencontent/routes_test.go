@@ -60,6 +60,12 @@ func newRouteTest(t *testing.T) (*httptest.Server, *http.Client) {
 	db := newTestDB(t)
 	seedCore(t, db)
 	seedOpenContent(t, db)
+	return newRouteServer(t, db)
+}
+
+// newRouteServer starts the routes on db.
+func newRouteServer(t *testing.T, db *gorm.DB) (*httptest.Server, *http.Client) {
+	t.Helper()
 	srv := &server{store: &store{db: db}, notify: &fakeNotifier{}, client: &http.Client{}}
 	ts := httptest.NewServer(newRouter(srv.routes(), testLogin))
 	t.Cleanup(ts.Close)
@@ -81,12 +87,18 @@ func testLogin(next http.Handler) http.Handler {
 }
 
 // seedCore adds what core's test database started with that the routes read:
-// its facilities, and the default helpful links and providers its seed added
-// as user 99999, visible at its default facility.
-func seedCore(t *testing.T, db *gorm.DB) {
+// its default facility, then facilities (North and South unless given), and
+// the default helpful links and providers its seed added as user 99999,
+// visible at the default facility.
+func seedCore(t *testing.T, db *gorm.DB, facilities ...string) {
 	t.Helper()
+	if facilities == nil {
+		facilities = []string{"North", "South"}
+	}
 	require.NoError(t, db.Exec(`CREATE TABLE facilities (id INTEGER PRIMARY KEY, name TEXT NOT NULL, deleted_at DATETIME)`).Error)
-	require.NoError(t, db.Exec(`INSERT INTO facilities (id, name) VALUES (1, 'Default'), (?, 'North'), (?, 'South')`, northID, southID).Error)
+	for _, name := range append([]string{"Default"}, facilities...) {
+		require.NoError(t, db.Exec(`INSERT INTO facilities (name) VALUES (?)`, name).Error)
+	}
 	seedCtx := identity.NewContext(t.Context(), &identity.Claims{UserID: 99999})
 	require.NoError(t, seed(db.WithContext(seedCtx), 1))
 }
@@ -170,6 +182,16 @@ func call(t *testing.T, ts *httptest.Server, client *http.Client, c *identity.Cl
 	b, err := io.ReadAll(resp.Body)
 	require.NoError(t, err)
 	return routeResponse{status: resp.StatusCode, header: resp.Header, body: string(b)}
+}
+
+// data decodes the "data" of a JSON answer into a T.
+func data[T any](t *testing.T, resp routeResponse) T {
+	t.Helper()
+	var body struct {
+		Data T `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(resp.body), &body), resp.body)
+	return body.Data
 }
 
 // message is the "message" of a JSON answer.
