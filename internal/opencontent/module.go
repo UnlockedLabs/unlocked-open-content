@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"net/http"
@@ -39,9 +40,10 @@ var migrations embed.FS
 
 // NewHandler serves Open Content's routes, each behind requireLogin and its
 // access checks, and its answers to core's questions on
-// /internal/v1/open-content/, which the ingress never routes. A failure to
-// reach AWS or NATS is an error.
-func NewHandler(ctx context.Context, db *gorm.DB, nc *nats.Conn, requireLogin func(http.Handler) http.Handler) (http.Handler, error) {
+// /internal/v1/open-content/, which the ingress never routes, to callers with
+// token, the site's secret core also has. A failure to reach AWS or NATS is
+// an error.
+func NewHandler(ctx context.Context, db *gorm.DB, nc *nats.Conn, requireLogin func(http.Handler) http.Handler, token string) (http.Handler, error) {
 	srv := &server{
 		store:  &store{db: db},
 		notify: natsNotifier{nc},
@@ -60,14 +62,19 @@ func NewHandler(ctx context.Context, db *gorm.DB, nc *nats.Conn, requireLogin fu
 
 	mux := http.NewServeMux()
 	mux.Handle("/api/", newRouter(srv.routes(), requireLogin))
-	mux.Handle("/internal/v1/open-content/", api.NewHandler(NewAPI(db)))
+	mux.Handle("/internal/v1/open-content/", api.NewHandler(NewAPI(db), token))
 	return mux, nil
 }
 
-// Work runs the worker until ctx is canceled: it runs Open Content's jobs as
-// they're published, and publishes the scheduled ones on their schedules.
-// Canceling ctx also stops the jobs that are running.
+// Work runs the worker until ctx is canceled. It first seeds a new database
+// (waitAndSeed), so the scheduled jobs find the Kiwix and YouTube providers,
+// then runs Open Content's jobs as they're published, and publishes the
+// scheduled ones on their schedules. Canceling ctx also stops the jobs that
+// are running.
 func Work(ctx context.Context, db *gorm.DB, nc *nats.Conn) error {
+	if err := waitAndSeed(ctx, db); err != nil {
+		return err
+	}
 	w := &worker{store: &store{db: db}}
 	if err := w.subscribe(ctx, nc); err != nil {
 		return err
@@ -103,6 +110,24 @@ func Migrate(ctx context.Context, db *sql.DB) error {
 	}
 	if err != nil {
 		return fmt.Errorf("migrate: %w", err)
+	}
+	return nil
+}
+
+// Reset rolls back every Open Content migration on db, which connects as the
+// database's own user, so core's reset can then drop the tables. Run it before
+// core's: the first migration's rollback moves the tables back to public.
+func Reset(ctx context.Context, db *sql.DB) error {
+	p, err := migrationProvider(db)
+	if err != nil {
+		return err
+	}
+	results, err := p.DownTo(ctx, 0)
+	for _, r := range results {
+		log.Infof("Rolled back migration %s in %s", r.Source.Path, r.Duration)
+	}
+	if err != nil {
+		return fmt.Errorf("roll back migrations: %w", err)
 	}
 	return nil
 }
@@ -211,13 +236,42 @@ const defaultLeftMenuLinks = `[{
 	    "facility_id": 1
 	    }]`
 
+// errNoFacility is Seed's answer before core has created its first facility.
+var errNoFacility = errors.New("core hasn't created its first facility")
+
+// seedPollInterval is how often waitAndSeed checks for core's first facility.
+const seedPollInterval = 5 * time.Second
+
+// waitAndSeed seeds a new database, first waiting until core has created its
+// first facility, which core does when it first starts. It returns ctx's
+// error if ctx is canceled first.
+func waitAndSeed(ctx context.Context, db *gorm.DB) error {
+	for {
+		err := Seed(ctx, db)
+		if !errors.Is(err, errNoFacility) {
+			return err
+		}
+		log.Info("Waiting for core's first facility to seed the new database")
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(seedPollInterval):
+		}
+	}
+}
+
 // Seed gives a new database, one that has never had a helpful link or a
-// Kiwix provider, the default helpful links and the Kiwix and YouTube
-// providers. Core creates its first facility, where the links are visible,
-// when it first starts, which can be after migrate runs; until then Seed adds
-// nothing, and a later run seeds. It adds all or nothing.
+// Kiwix provider, the default helpful links, visible at core's first
+// facility, and the Kiwix and YouTube providers. Until core has created that
+// facility it adds nothing and returns errNoFacility. It adds all or nothing,
+// and on Postgres two Seeds never run at once.
 func Seed(ctx context.Context, db *gorm.DB) error {
 	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if tx.Name() == "postgres" {
+			if err := tx.Exec("SELECT pg_advisory_xact_lock(hashtext('open_content_seed'))").Error; err != nil {
+				return fmt.Errorf("lock the seed: %w", err)
+			}
+		}
 		var links, kiwix int64
 		if err := tx.Unscoped().Model(&HelpfulLink{}).Count(&links).Error; err != nil {
 			return fmt.Errorf("count helpful links: %w", err)
@@ -233,8 +287,7 @@ func Seed(ctx context.Context, db *gorm.DB) error {
 			return fmt.Errorf("find core's first facility: %w", err)
 		}
 		if facilityID == 0 {
-			log.Info("Not seeding yet: core hasn't created its first facility")
-			return nil
+			return errNoFacility
 		}
 		// Core's seed recorded its rows as made by the system_batch user.
 		var batchUserID uint

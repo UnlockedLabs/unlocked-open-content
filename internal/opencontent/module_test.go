@@ -1,15 +1,16 @@
 package opencontent
 
 import (
+	"context"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
 
-// Seed fills only a new database, and only once core has a facility, so a
-// migrate run before core's first start seeds on a later run.
+// Seed fills only a new database, and only once core has a facility.
 func TestSeed(t *testing.T) {
 	type counts struct{ links, providers, visibility int64 }
 	countRows := func(t *testing.T, db *gorm.DB) counts {
@@ -57,12 +58,37 @@ func TestSeed(t *testing.T) {
 
 	t.Run("no facility yet", func(t *testing.T) {
 		db := newDB(t)
-		require.NoError(t, Seed(t.Context(), db))
+		require.ErrorIs(t, Seed(t.Context(), db), errNoFacility)
 		assert.Equal(t, counts{}, countRows(t, db))
 
 		require.NoError(t, db.Exec(`INSERT INTO facilities (name) VALUES ('Default')`).Error)
 		require.NoError(t, Seed(t.Context(), db))
 		assert.Equal(t, counts{links: 2, providers: 2, visibility: 2}, countRows(t, db))
+	})
+
+	t.Run("worker waits for core's first facility", func(t *testing.T) {
+		db := newDB(t)
+		done := make(chan error, 1)
+		go func() { done <- waitAndSeed(t.Context(), db) }()
+		select {
+		case err := <-done:
+			t.Fatalf("waitAndSeed returned %v before core had a facility", err)
+		case <-time.After(100 * time.Millisecond):
+		}
+		require.NoError(t, db.Exec(`INSERT INTO facilities (name) VALUES ('Default')`).Error)
+		select {
+		case err := <-done:
+			require.NoError(t, err)
+		case <-time.After(3 * seedPollInterval):
+			t.Fatal("waitAndSeed didn't seed once core had a facility")
+		}
+		assert.Equal(t, counts{links: 2, providers: 2, visibility: 2}, countRows(t, db))
+	})
+
+	t.Run("worker stops waiting when canceled", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(t.Context())
+		cancel()
+		require.ErrorIs(t, waitAndSeed(ctx, newDB(t)), context.Canceled)
 	})
 
 	t.Run("site with only deleted links", func(t *testing.T) {

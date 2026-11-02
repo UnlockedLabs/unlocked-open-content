@@ -1,6 +1,8 @@
 // Command app is Open Content's one binary: "app serve" runs the API, "app
-// worker" runs the jobs and their schedules, and "app migrate" migrates and
-// seeds the database. serve and worker stop cleanly on SIGINT or SIGTERM.
+// worker" seeds a new database and runs the jobs and their schedules, and
+// "app migrate" migrates the database. For a local database, "app seed-dev" adds sample data
+// and "app migrate-reset" rolls back the migrations. serve and worker stop
+// cleanly on SIGINT or SIGTERM.
 package main
 
 import (
@@ -20,7 +22,7 @@ import (
 	"gorm.io/gorm"
 )
 
-const usage = "usage: app serve | app worker | app migrate"
+const usage = "usage: app serve | app worker | app migrate | app seed-dev | app migrate-reset"
 
 func main() {
 	initLogging()
@@ -43,6 +45,10 @@ func run(ctx context.Context, args []string) error {
 		return work(ctx)
 	case "migrate":
 		return migrate(ctx)
+	case "seed-dev":
+		return seedDev(ctx)
+	case "migrate-reset":
+		return migrateReset(ctx)
 	default:
 		return fmt.Errorf("unknown command %q: %s", args[0], usage)
 	}
@@ -50,14 +56,19 @@ func run(ctx context.Context, args []string) error {
 
 // serve runs the API once the database is migrated. KRATOS_PUBLIC_URL says
 // whether a login session is active, and core, at APP_URL, who its user is.
+// Core asks its questions with OPEN_CONTENT_TOKEN, the site's secret.
 func serve(ctx context.Context) error {
+	token := os.Getenv("OPEN_CONTENT_TOKEN")
+	if token == "" {
+		return errors.New("OPEN_CONTENT_TOKEN must be set: it's the secret core asks Open Content's questions with")
+	}
 	db, nc, err := connect(ctx)
 	if err != nil {
 		return err
 	}
 	defer closeAll(db, nc)
 	sessions := identity.NewSessionChecker(os.Getenv("KRATOS_PUBLIC_URL"), os.Getenv("APP_URL"), nil)
-	app, err := opencontent.NewHandler(ctx, db, nc, sessions.Require)
+	app, err := opencontent.NewHandler(ctx, db, nc, sessions.Require, token)
 	if err != nil {
 		return err
 	}
@@ -74,8 +85,8 @@ func work(ctx context.Context) error {
 	return opencontent.Work(ctx, db, nc)
 }
 
-// migrate runs Open Content's migrations as the database's own user, then
-// seeds a new database as the open_content role.
+// migrate runs Open Content's migrations as the database's own user. The
+// worker seeds a new database.
 func migrate(ctx context.Context) error {
 	owner, err := database.Open(ctx, database.DSN("prefer"))
 	if err != nil {
@@ -85,32 +96,43 @@ func migrate(ctx context.Context) error {
 	if err := opencontent.Migrate(ctx, owner); err != nil {
 		return err
 	}
-	db, err := database.OpenAs(ctx, database.DSN("prefer"), opencontent.Schema)
-	if err != nil {
-		return err
-	}
-	defer closeAll(db, nil)
-	if err := opencontent.Seed(ctx, db); err != nil {
-		return fmt.Errorf("seed: %w", err)
-	}
 	log.Info("Migrations completed successfully")
 	return nil
 }
 
-// connect waits until the database is migrated, then opens Open Content's
-// connection to it and connects to NATS with NATS_URL, NATS_USER and
-// NATS_PASSWORD.
+// seedDev adds sample data for core's dev residents. It runs only with
+// APP_ENV=dev, so it can never add sample data to a real site.
+func seedDev(ctx context.Context) error {
+	if os.Getenv("APP_ENV") != "dev" {
+		return errors.New("seed-dev adds sample data, so it runs only with APP_ENV=dev")
+	}
+	db, err := connectDB(ctx)
+	if err != nil {
+		return err
+	}
+	defer closeAll(db, nil)
+	return opencontent.SeedDev(ctx, db)
+}
+
+// migrateReset rolls back Open Content's migrations, for core's
+// `make migrate-fresh`. It runs only with APP_ENV=dev, so it can never touch a
+// real site.
+func migrateReset(ctx context.Context) error {
+	if os.Getenv("APP_ENV") != "dev" {
+		return errors.New("migrate-reset rolls back the migrations, so it runs only with APP_ENV=dev")
+	}
+	owner, err := database.Open(ctx, database.DSN("prefer"))
+	if err != nil {
+		return err
+	}
+	defer func() { _ = owner.Close() }()
+	return opencontent.Reset(ctx, owner)
+}
+
+// connect opens Open Content's database connection (connectDB) and connects
+// to NATS with NATS_URL, NATS_USER and NATS_PASSWORD.
 func connect(ctx context.Context) (*gorm.DB, *nats.Conn, error) {
-	owner, err := database.Open(ctx, database.DSN("allow"))
-	if err != nil {
-		return nil, nil, err
-	}
-	err = opencontent.WaitForMigrations(ctx, owner)
-	_ = owner.Close()
-	if err != nil {
-		return nil, nil, fmt.Errorf("wait for migrations: %w", err)
-	}
-	db, err := database.OpenAs(ctx, database.DSN("allow"), opencontent.Schema)
+	db, err := connectDB(ctx)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -120,6 +142,21 @@ func connect(ctx context.Context) (*gorm.DB, *nats.Conn, error) {
 		return nil, nil, fmt.Errorf("connect to NATS: %w", err)
 	}
 	return db, nc, nil
+}
+
+// connectDB waits until the database is migrated, then opens Open Content's
+// connection to it.
+func connectDB(ctx context.Context) (*gorm.DB, error) {
+	owner, err := database.Open(ctx, database.DSN("allow"))
+	if err != nil {
+		return nil, err
+	}
+	err = opencontent.WaitForMigrations(ctx, owner)
+	_ = owner.Close()
+	if err != nil {
+		return nil, fmt.Errorf("wait for migrations: %w", err)
+	}
+	return database.OpenAs(ctx, database.DSN("allow"), opencontent.Schema)
 }
 
 // closeAll closes db, then nc, which may be nil.

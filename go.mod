@@ -3,7 +3,7 @@ module github.com/UnlockedLabs/unlocked-open-content
 go 1.26.10
 
 require (
-	github.com/UnlockedLabs/unlocked-contracts v0.2.2-0.20261102162834-63e7bd1f3289
+	github.com/UnlockedLabs/unlocked-contracts v0.2.2-0.20261102220558-616eebb39f3e
 	github.com/aws/aws-sdk-go-v2 v1.42.1
 	github.com/aws/aws-sdk-go-v2/config v1.32.7
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.105.0

@@ -1,5 +1,5 @@
-github.com/UnlockedLabs/unlocked-contracts v0.2.2-0.20261102162834-63e7bd1f3289 h1:l+2pamkGM0XxVDNNs45Cd4KjENFL/OW0mlYB/WEDNSA=
-github.com/UnlockedLabs/unlocked-contracts v0.2.2-0.20261102162834-63e7bd1f3289/go.mod h1:RAEqqBigq/Gu5ARxWKsSjN34B2N3GlEyGX8DjHjKxK0=
+github.com/UnlockedLabs/unlocked-contracts v0.2.2-0.20261102220558-616eebb39f3e h1:u9NX3tZhQPy6sa+ywyKGBGAvhXoVov+K/KY7gpCswZA=
+github.com/UnlockedLabs/unlocked-contracts v0.2.2-0.20261102220558-616eebb39f3e/go.mod h1:RAEqqBigq/Gu5ARxWKsSjN34B2N3GlEyGX8DjHjKxK0=
 github.com/aws/aws-sdk-go-v2 v1.42.1 h1:9eOTgu1z/dVtYpNZ3/8/XbbaX0x/BqE3HUzAzs6K0ek=
 github.com/aws/aws-sdk-go-v2 v1.42.1/go.mod h1:5pKeft2eJj+gElQ38Jqg4ibCqh+/AK33/0X3hip7IjM=
 github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.14 h1:3IZY0XAJquT3aHzbkHfPzy4ACPcEjVG0x87KOwtpqGY=

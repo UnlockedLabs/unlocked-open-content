@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"time"
 
 	"github.com/UnlockedLabs/unlocked-contracts/jobs"
 	"github.com/go-co-op/gocron/v2"
@@ -22,7 +23,7 @@ const everyDaytimeHour = "0 6-20 * * *"
 type scheduler interface {
 	// Cron runs task on a standard five-field cron schedule.
 	Cron(spec string, task func()) error
-	// AtStart runs task once, as soon as the scheduler starts.
+	// AtStart runs task once, startDelay after the scheduler starts.
 	AtStart(task func()) error
 }
 
@@ -35,9 +36,15 @@ func (s cronScheduler) Cron(spec string, task func()) error {
 }
 
 func (s cronScheduler) AtStart(task func()) error {
-	_, err := s.NewJob(gocron.OneTimeJob(gocron.OneTimeJobStartImmediately()), gocron.NewTask(task))
+	start := gocron.OneTimeJobStartDateTime(time.Now().Add(startDelay))
+	_, err := s.NewJob(gocron.OneTimeJob(start), gocron.NewTask(task))
 	return err
 }
+
+// startDelay holds back the at-start jobs, as core's scheduler did: a deploy
+// restarts core alongside the worker, and the Kiwix scrape uploads each
+// library's thumbnail to core, which refuses them until it's listening.
+const startDelay = 60 * time.Second
 
 // scheduledJob is a job the scheduler publishes on a cron schedule.
 type scheduledJob struct {
