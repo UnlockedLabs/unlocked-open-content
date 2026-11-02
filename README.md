@@ -15,16 +15,19 @@ One binary, one image:
 | Command | What it does |
 |---|---|
 | `app serve` | The API, on `ADDR`. Waits until the database is migrated. |
-| `app worker` | The jobs (Kiwix scrape, video downloads, retries, metadata sync) and their cron schedules. Run one replica, so each schedule fires once. Waits until the database is migrated. |
-| `app migrate` | Runs the migrations, then seeds a new database. Run it after core's migrations. |
+| `app worker` | Seeds a new database, then runs the jobs (Kiwix scrape, video downloads, retries, metadata sync) and their cron schedules. Run one replica, so each schedule fires once. Waits until the database is migrated. |
+| `app migrate` | Runs the migrations. Run it after core's migrations. |
+| `app seed-dev` | Local only (`APP_ENV=dev`): adds sample videos, favorites and activity for core's residents. Core's `make seed` runs it. |
+| `app migrate-reset` | Local only (`APP_ENV=dev`): rolls back the migrations. Core's `make migrate-fresh` runs it before its own reset. |
 
 ## Run it locally
 
-Needs Go 1.26 and Docker, plus core's Postgres, NATS and Kratos (core's
-`make dev` runs them).
+Core's `make dev` builds and runs all of Open Content from this checkout,
+next to core's, so most of the time that's all you need. To run it on its
+own you need Go 1.26 and Docker, plus core's Postgres, NATS and Kratos.
 
 ```sh
-make migrate  # migrations and seed
+make migrate  # migrations
 make run      # API on :8080
 make worker   # the worker
 make test     # go test -race
@@ -40,6 +43,7 @@ Settings, all from the environment:
 | `APP_DSN`, or `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME` | Core's database, as core reads them. |
 | `NATS_URL`, `NATS_USER`, `NATS_PASSWORD` | Core's NATS. |
 | `KRATOS_PUBLIC_URL` | Kratos's public API, to check the login session. |
+| `OPEN_CONTENT_TOKEN` | The site's secret core asks its questions with. Core's server has the same one. `serve` won't start without it. |
 | `APP_URL` | Core inside the cluster, such as `http://server:8080`: who a user is, and where thumbnails are uploaded. |
 | `KIWIX_SERVER_URL` | Kiwix, for a new database's Kiwix provider. |
 | `S3_BUCKET_NAME`, `AWS_REGION` | The videos bucket. Without a bucket, videos are served from `/videos`. |
@@ -61,7 +65,9 @@ Settings, all from the environment:
 - **Core's questions:** core's dashboard, reports, facility list, Knowledge
   Center and demo seed ask Open Content through
   `unlocked-contracts/opencontent`. This service answers them on
-  `/internal/v1/open-content/`, which the ingress never routes.
+  `/internal/v1/open-content/`, which the ingress never routes, and only
+  with `OPEN_CONTENT_TOKEN`: the demo reset deletes activity at every
+  facility.
 - **Notifications:** a visit is published on NATS (`opencontent.notify`), and
   core sends it to the user's browser over its websocket.
 - **Thumbnails** are uploaded to core's `/upload` and served from core's
@@ -82,10 +88,11 @@ needs no password of its own.
 - **Create new tables as `open_content.<name>`.** Migrations run as core's
   user, so an unqualified table lands in `public`, where the role can't use
   it.
-- **The seed** gives a new database, one that has never had a helpful link
-  or a Kiwix provider, the default links and the Kiwix and YouTube providers.
-  Core creates its first facility when it first starts; until then the seed
-  waits, and the next `migrate` run adds it.
+- **The worker seeds a new database**, one that has never had a helpful link
+  or a Kiwix provider, with the default links and the Kiwix and YouTube
+  providers, before it starts the jobs. The links are visible at core's first
+  facility, which core creates when it first starts, so the worker waits for
+  it. A Postgres lock keeps two seeds from ever running at once.
 
 ## Tests
 
