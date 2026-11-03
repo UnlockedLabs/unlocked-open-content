@@ -72,6 +72,9 @@ Settings, all from the environment:
   core sends it to the user's browser over its websocket.
 - **Thumbnails** are uploaded to core's `/upload` and served from core's
   `/api/photos`.
+- **Metrics:** `/api/metrics` serves core's request metrics for Prometheus,
+  labeled by route. The Service's `prometheus.io/*` annotations point prod
+  Prometheus at it, and the ingress never routes it.
 
 ## Database
 
@@ -137,7 +140,7 @@ and deploy through the deploy workflow. Only staging may use `latest`.
 
 ## Vulnerability alerts
 
-`govulncheck` runs on every push and every Monday, and blocks PRs. Posting
-its failures to Slack is on hold (EN-205): the repo has no
-`SLACK_WEBHOOK_URL` yet, so a failure shows only as a red check. Setting it
-up is described in unlocked-product-template's README.
+`govulncheck` runs on every push and every Monday, and blocks PRs. A failure
+on any branch posts to Slack through the `SLACK_WEBHOOK_URL` secret, the same
+alert unlocked-core's PR scan sends. Without the secret, a failure shows only
+as a red check.
