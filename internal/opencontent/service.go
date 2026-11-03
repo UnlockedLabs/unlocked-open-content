@@ -24,7 +24,8 @@ type server struct {
 	store  *store
 	notify notifier
 	nats   *nats.Conn
-	// libraryPaths caches each library's proxy target (LibraryProxyPO) by ID.
+	// libraryPaths caches each library's proxy target (LibraryProxyPO) at
+	// each facility.
 	libraryPaths nats.KeyValue
 	sesClient    *sesv2.Client
 	presigner    *s3.PresignClient
@@ -126,31 +127,6 @@ func (srv *server) createContentActivityAndNotifyWS(urlString string, activity *
 			}
 			srv.notify.Notify(api.Notification{UserID: activity.UserID, Event: bookmarkEvent, Text: msg})
 		}
-	}
-}
-
-// updateLibraryBucket updates a library's cached visibility, or caches the
-// library if it isn't yet.
-func (srv *server) updateLibraryBucket(key string, library *Library, log sLog) {
-	var proxyParams *LibraryProxyPO
-	entry, err := srv.libraryPaths.Get(key)
-	if err == nil {
-		err = json.Unmarshal(entry.Value(), &proxyParams)
-		if err != nil {
-			log.warn("unable to unmarshal value from LibaryPaths bucket")
-			return
-		}
-		proxyParams.VisibilityStatus = library.VisibilityStatus
-	} else { //build a one for the bucket
-		proxyParams = library.IntoProxyPO()
-	}
-	marshaledParams, err := json.Marshal(proxyParams)
-	if err != nil {
-		log.warn("unable to marshal value to put into the LibaryPaths bucket")
-		return
-	}
-	if _, err := srv.libraryPaths.Put(key, marshaledParams); err != nil {
-		log.warnf("unable to update value within LibaryPaths bucket, error is %v", err)
 	}
 }
 

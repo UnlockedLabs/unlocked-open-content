@@ -275,9 +275,7 @@ func (srv *server) handleToggleLibraryVisibility(w http.ResponseWriter, r *http.
 		log.add("library_id", id)
 		return newDatabaseServiceError(err)
 	}
-	if srv.libraryPaths != nil { //make sure to update value in bucket if exists
-		srv.updateLibraryBucket(r.PathValue("id"), library, log)
-	}
+	srv.cacheLibraryVisibility(library, []uint{args.FacilityID}, log)
 	return writeJsonResponse(w, http.StatusOK, "Library visibility updated successfully")
 }
 
@@ -318,9 +316,7 @@ func (srv *server) handleSetLibraryFacilityVisibility(w http.ResponseWriter, r *
 		log.add("library_id", id)
 		return newDatabaseServiceError(err)
 	}
-	if srv.libraryPaths != nil && slices.Contains(req.FacilityIDs, args.FacilityID) {
-		srv.updateLibraryBucket(r.PathValue("id"), library, log)
-	}
+	srv.cacheLibraryVisibility(library, req.FacilityIDs, log)
 	return writeJsonResponse(w, http.StatusOK, "Library visibility updated successfully")
 }
 

@@ -4,18 +4,21 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/UnlockedLabs/unlocked-contracts/features"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/nats-io/nats.go"
 	"github.com/sirupsen/logrus"
 )
 
@@ -87,10 +90,12 @@ func (srv *server) libraryProxyMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-// libraryProxyParams is the library's proxy target, from the library_paths
-// cache when it is there, and otherwise from the database, then cached.
+// libraryProxyParams is the library's proxy target at facilityID, from the
+// library_paths cache when it is there, and otherwise from the database, then
+// cached.
 func (srv *server) libraryProxyParams(resourceID string, facilityID uint) (*LibraryProxyPO, bool) {
-	if proxyParams, ok := srv.cachedLibraryProxy(resourceID); ok {
+	key := libraryCacheKey(resourceID, facilityID)
+	if proxyParams, ok := srv.cachedLibraryProxy(key); ok {
 		return proxyParams, true
 	}
 	library, ok := srv.store.findLibraryProxy(resourceID, facilityID)
@@ -98,17 +103,23 @@ func (srv *server) libraryProxyParams(resourceID string, facilityID uint) (*Libr
 		return nil, false
 	}
 	proxyParams := library.IntoProxyPO()
-	srv.cacheLibraryProxy(resourceID, proxyParams)
+	srv.cacheLibraryProxy(key, proxyParams)
 	return proxyParams, true
+}
+
+// libraryCacheKey is the library_paths key for a library at a facility. Its
+// visibility differs by facility, so the facility is part of the key.
+func libraryCacheKey(libraryID string, facilityID uint) string {
+	return fmt.Sprintf("%s.%d", libraryID, facilityID)
 }
 
 // cachedLibraryProxy reads the library_paths cache. There is no cache
 // without NATS, as in tests.
-func (srv *server) cachedLibraryProxy(resourceID string) (*LibraryProxyPO, bool) {
+func (srv *server) cachedLibraryProxy(key string) (*LibraryProxyPO, bool) {
 	if srv.libraryPaths == nil {
 		return nil, false
 	}
-	entry, err := srv.libraryPaths.Get(resourceID)
+	entry, err := srv.libraryPaths.Get(key)
 	if err != nil {
 		return nil, false
 	}
@@ -120,7 +131,10 @@ func (srv *server) cachedLibraryProxy(resourceID string) (*LibraryProxyPO, bool)
 	return proxyParams, true
 }
 
-func (srv *server) cacheLibraryProxy(resourceID string, proxyParams *LibraryProxyPO) {
+// cacheLibraryProxy caches what the proxy read from the database, unless the
+// key was written meanwhile: an admin's change, written by
+// cacheLibraryVisibility, is newer than this read.
+func (srv *server) cacheLibraryProxy(key string, proxyParams *LibraryProxyPO) {
 	if srv.libraryPaths == nil {
 		return
 	}
@@ -129,8 +143,27 @@ func (srv *server) cacheLibraryProxy(resourceID string, proxyParams *LibraryProx
 		logrus.Warnf("issue marshaling LibraryProxyPO, error is: %v", err)
 		return
 	}
-	if _, err := srv.libraryPaths.Put(resourceID, marshaledParams); err != nil {
+	if _, err := srv.libraryPaths.Create(key, marshaledParams); err != nil && !errors.Is(err, nats.ErrKeyExists) {
 		logrus.Warnf("issue putting LibraryProxyPO into bucket, error is: %v", err)
+	}
+}
+
+// cacheLibraryVisibility caches library's new visibility at each facility in
+// facilityIDs, after an admin changed it there.
+func (srv *server) cacheLibraryVisibility(library *Library, facilityIDs []uint, log sLog) {
+	if srv.libraryPaths == nil {
+		return
+	}
+	marshaledParams, err := json.Marshal(library.IntoProxyPO())
+	if err != nil {
+		log.warn("unable to marshal value to put into the LibaryPaths bucket")
+		return
+	}
+	for _, facilityID := range facilityIDs {
+		key := libraryCacheKey(strconv.Itoa(int(library.ID)), facilityID)
+		if _, err := srv.libraryPaths.Put(key, marshaledParams); err != nil {
+			log.warnf("unable to update value within LibaryPaths bucket, error is %v", err)
+		}
 	}
 }
 

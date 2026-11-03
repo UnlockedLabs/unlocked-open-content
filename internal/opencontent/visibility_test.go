@@ -3,6 +3,8 @@ package opencontent
 import (
 	"fmt"
 	"net/http"
+	"net/http/httptest"
+	"strconv"
 	"testing"
 	"time"
 
@@ -133,6 +135,55 @@ func TestLibraryFacilityVisibility(t *testing.T) {
 		rows := visibility(t)
 		require.True(t, statusAt(t, rows, facilityA))
 		require.False(t, statusAt(t, rows, facilityB))
+	})
+}
+
+// The library proxy's cache holds a library's visibility at each facility,
+// so a resident only opens a library visible at their own facility, and an
+// admin's change reaches every facility it was made for.
+func TestLibraryProxyCache(t *testing.T) {
+	db := newTestDB(t)
+	seedCore(t, db, "Facility A", "Facility B")
+	srv := &server{store: &store{db: db}, notify: &fakeNotifier{}, client: &http.Client{}, libraryPaths: newFakeKV()}
+	ts := httptest.NewServer(newRouter(srv.routes(), testLogin))
+	t.Cleanup(ts.Close)
+	client := ts.Client()
+
+	kiwixID := insertID(t, db, `INSERT INTO open_content_providers (title, url, currently_enabled) VALUES ('Kiwix', 'http://kiwix', true)`)
+	libraryID := insertID(t, db, `INSERT INTO libraries (open_content_provider_id, title, url) VALUES (?, 'Test Library', '/test')`, kiwixID)
+	id := strconv.Itoa(int(libraryID))
+	dept := &identity.Claims{UserID: 10, Role: users.DepartmentAdmin, FacilityID: facilityA, FeatureAccess: features.All}
+	set := func(t *testing.T, ids []uint, visible bool) {
+		t.Helper()
+		expectStatus(t, call(t, ts, client, dept, http.MethodPut, "/api/libraries/"+id+"/facilities", map[string]any{"facility_ids": ids, "visibility_status": visible}), http.StatusOK)
+	}
+	visible := func(t *testing.T, facilityID uint) bool {
+		t.Helper()
+		params, ok := srv.libraryProxyParams(id, facilityID)
+		require.True(t, ok)
+		return params.VisibilityStatus
+	}
+
+	set(t, []uint{facilityA}, true)
+	require.True(t, visible(t, facilityA))
+	require.False(t, visible(t, facilityB), "hidden at B though cached as visible at A")
+
+	t.Run("a change at another facility", func(t *testing.T) {
+		set(t, []uint{facilityB}, true)
+		require.True(t, visible(t, facilityB))
+		require.True(t, visible(t, facilityA))
+	})
+
+	t.Run("a toggle at the admin's facility", func(t *testing.T) {
+		fac := &identity.Claims{UserID: 11, Role: users.FacilityAdmin, FacilityID: facilityA, FeatureAccess: features.All}
+		expectStatus(t, call(t, ts, client, fac, http.MethodPut, "/api/libraries/"+id+"/toggle", map[string]any{}), http.StatusOK)
+		require.False(t, visible(t, facilityA))
+		require.True(t, visible(t, facilityB))
+	})
+
+	t.Run("a read from before an admin's change", func(t *testing.T) {
+		srv.cacheLibraryProxy(libraryCacheKey(id, facilityA), &LibraryProxyPO{ID: uint(libraryID), VisibilityStatus: true})
+		require.False(t, visible(t, facilityA))
 	})
 }
 
