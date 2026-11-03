@@ -4,6 +4,9 @@ FROM mwader/static-ffmpeg:$FFMPEG_VERSION AS ffmpeg
 
 FROM golang:1.26-alpine AS builder
 
+# A cached golang:1.26-alpine can be older than go.mod's go line: auto
+# downloads the right toolchain instead of failing, as core's build does.
+ENV GOTOOLCHAIN=auto
 WORKDIR /src
 COPY go.mod go.sum* ./
 RUN go mod download
