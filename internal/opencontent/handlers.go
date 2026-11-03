@@ -16,6 +16,7 @@ import (
 
 	"github.com/UnlockedLabs/unlocked-contracts/features"
 	"github.com/UnlockedLabs/unlocked-open-content/internal/models"
+	"github.com/UnlockedLabs/unlocked-open-content/internal/tasks"
 	"github.com/sirupsen/logrus"
 )
 
@@ -572,7 +573,7 @@ func (srv *server) handleVideoAction(w http.ResponseWriter, r *http.Request, log
 		if len(video.Attempts) >= models.MAX_DOWNLOAD_ATTEMPTS {
 			return newBadRequestServiceError(errors.New("max attempts reached"), "max download attempts reached, please remove video and try again")
 		}
-		msg, err := retryManualDownloadMsg(video)
+		msg, err := tasks.RetryManualDownloadMsg(video)
 		if err != nil {
 			return newInternalServerServiceError(err, "error marshalling video")
 		}
@@ -637,7 +638,7 @@ func (srv *server) handlePostVideos(w http.ResponseWriter, r *http.Request, log 
 	if err != nil {
 		return newInternalServerServiceError(err, "error fetching video provider")
 	}
-	msg, err := addVideosMsg(video.VideoUrls, provider)
+	msg, err := tasks.AddVideosMsg(video.VideoUrls, provider)
 	if err != nil {
 		return newInternalServerServiceError(err, "error publishing add_video job")
 	}

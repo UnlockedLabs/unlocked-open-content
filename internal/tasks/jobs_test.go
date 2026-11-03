@@ -1,4 +1,4 @@
-package opencontent
+package tasks
 
 import (
 	"context"
@@ -30,7 +30,7 @@ func TestJobMessages(t *testing.T) {
 
 	t.Run("add videos", func(t *testing.T) {
 		provider := &models.OpenContentProvider{DatabaseFields: models.DatabaseFields{ID: 2}}
-		msg, err := addVideosMsg([]string{"https://www.youtube.com/watch?v=a"}, provider)
+		msg, err := AddVideosMsg([]string{"https://www.youtube.com/watch?v=a"}, provider)
 		require.NoError(t, err)
 		assert.Equal(t, "tasks.add_videos", msg.Subject)
 		assert.JSONEq(t, `{"open_content_provider_id":2,"job_type":"add_videos","video_urls":["https://www.youtube.com/watch?v=a"]}`, string(msg.Data))
@@ -38,7 +38,7 @@ func TestJobMessages(t *testing.T) {
 
 	t.Run("retry a download", func(t *testing.T) {
 		video := &models.Video{DatabaseFields: models.DatabaseFields{ID: 7}, OpenContentProviderID: 2}
-		msg, err := retryManualDownloadMsg(video)
+		msg, err := RetryManualDownloadMsg(video)
 		require.NoError(t, err)
 		assert.Equal(t, "tasks.retry_manual_download", msg.Subject)
 		assert.JSONEq(t, `{"video_id":7,"open_content_provider_id":2,"job_type":"retry_video_downloads"}`, string(msg.Data))

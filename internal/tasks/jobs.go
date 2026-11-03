@@ -1,4 +1,4 @@
-package opencontent
+package tasks
 
 import (
 	"context"
@@ -132,8 +132,8 @@ func scheduledJobMsg(job jobs.Type, providerID uint) (*nats.Msg, error) {
 	return msg, nil
 }
 
-// addVideosMsg asks the worker to download new videos.
-func addVideosMsg(videoUrls []string, provider *models.OpenContentProvider) (*nats.Msg, error) {
+// AddVideosMsg asks the worker to download new videos.
+func AddVideosMsg(videoUrls []string, provider *models.OpenContentProvider) (*nats.Msg, error) {
 	msg := nats.NewMsg(jobs.AddVideos.PubName())
 	body := make(map[string]any)
 	body["open_content_provider_id"] = provider.ID
@@ -147,9 +147,9 @@ func addVideosMsg(videoUrls []string, provider *models.OpenContentProvider) (*na
 	return msg, nil
 }
 
-// retryManualDownloadMsg asks the worker to try a failed video download
+// RetryManualDownloadMsg asks the worker to try a failed video download
 // again. Its job_type is retry_video_downloads, as it was in core.
-func retryManualDownloadMsg(video *models.Video) (*nats.Msg, error) {
+func RetryManualDownloadMsg(video *models.Video) (*nats.Msg, error) {
 	msg := nats.NewMsg(jobs.RetryManualDownload.PubName())
 	body := make(map[string]any)
 	body["video_id"] = video.ID

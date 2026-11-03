@@ -17,6 +17,7 @@ import (
 	"github.com/UnlockedLabs/unlocked-open-content/internal/database"
 	"github.com/UnlockedLabs/unlocked-open-content/internal/opencontent"
 	"github.com/UnlockedLabs/unlocked-open-content/internal/server"
+	"github.com/UnlockedLabs/unlocked-open-content/internal/tasks"
 	"github.com/nats-io/nats.go"
 	log "github.com/sirupsen/logrus"
 )
@@ -87,7 +88,7 @@ func work(ctx context.Context) error {
 		return err
 	}
 	defer closeAll(db, nc)
-	return opencontent.Work(ctx, db, nc)
+	return tasks.Work(ctx, db, nc)
 }
 
 // migrate runs Open Content's migrations as the database's own user. The

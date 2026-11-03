@@ -1,4 +1,4 @@
-package opencontent
+package tasks
 
 import (
 	"context"
@@ -57,7 +57,7 @@ func TestWorkerVideoRoutes(t *testing.T) {
 	provider := createProvider(t, db, models.Youtube, true)
 	w := &worker{db: db}
 
-	add, err := addVideosMsg([]string{url}, provider)
+	add, err := AddVideosMsg([]string{url}, provider)
 	require.NoError(t, err)
 	yt.failDownloads()
 	w.addVideos(context.Background(), add)
@@ -66,7 +66,7 @@ func TestWorkerVideoRoutes(t *testing.T) {
 	require.NoError(t, db.First(&v, "external_id = ?", "vid123").Error)
 	assert.Equal(t, models.VideoHasError, v.Availability)
 
-	retry, err := retryManualDownloadMsg(&v)
+	retry, err := RetryManualDownloadMsg(&v)
 	require.NoError(t, err)
 	t.Setenv("FAKE_YTDLP_EXIT", "0")
 	w.retryManualDownload(context.Background(), retry)
