@@ -8,6 +8,7 @@ import (
 
 	"github.com/UnlockedLabs/unlocked-contracts/features"
 	"github.com/UnlockedLabs/unlocked-contracts/identity"
+	"github.com/UnlockedLabs/unlocked-open-content/internal/models"
 	log "github.com/sirupsen/logrus"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -18,42 +19,10 @@ import (
 // caller as the create or update user; one without writes no user.
 type store struct{ db *gorm.DB }
 
-// OpenContentMeta is what a list adds to each library, video or link for the
-// caller.
-type OpenContentMeta struct {
-	IsFavorited          bool `json:"is_favorited"`
-	IsFeatured           bool `json:"is_featured"`
-	VisibleFacilityCount int  `json:"visible_facility_count"`
-}
-
-// ContentFacilityVisibility is whether one facility shows a library, video or
-// link.
-type ContentFacilityVisibility struct {
-	FacilityID       uint   `json:"facility_id"`
-	FacilityName     string `json:"facility_name"`
-	VisibilityStatus bool   `json:"visibility_status"`
-}
-
-type LibraryResponse struct {
-	Library
-	OpenContentMeta
-	Tags []string `json:"tags" gorm:"-"`
-}
-
-type VideoResponse struct {
-	Video
-	OpenContentMeta
-}
-
-type HelpfulLinkResp struct {
-	HelpfulLink
-	OpenContentMeta
-}
-
 // Facility visibility
 
-func (s *store) getContentFacilityVisibility(args *queryContext, contentID, providerID uint) ([]ContentFacilityVisibility, error) {
-	visibilities := make([]ContentFacilityVisibility, 0, 12)
+func (s *store) getContentFacilityVisibility(args *models.QueryContext, contentID, providerID uint) ([]models.ContentFacilityVisibility, error) {
+	visibilities := make([]models.ContentFacilityVisibility, 0, 12)
 	if err := s.db.WithContext(args.Ctx).Table("facilities f").
 		Select(`f.id AS facility_id, f.name AS facility_name,
 			COALESCE(fvs.visibility_status, false) AS visibility_status`).
@@ -68,7 +37,7 @@ func (s *store) getContentFacilityVisibility(args *queryContext, contentID, prov
 	return visibilities, nil
 }
 
-func (s *store) UpsertFacilityVisibilityStatuses(args *queryContext, statuses []FacilityVisibilityStatus, visible bool) error {
+func (s *store) UpsertFacilityVisibilityStatuses(args *models.QueryContext, statuses []models.FacilityVisibilityStatus, visible bool) error {
 	if len(statuses) == 0 {
 		return nil
 	}
@@ -101,12 +70,12 @@ func visibleFacilityCountSubquery(table string) string {
 
 // Retrieves either a paginated list of libraries or all libraries based upon the given parameters.
 // visibility - can either be featured, visible, hidden, or all
-func (s *store) GetAllLibraries(args *queryContext, visibility string) ([]LibraryResponse, error) {
+func (s *store) GetAllLibraries(args *models.QueryContext, visibility string) ([]models.LibraryResponse, error) {
 	var (
 		criteria string
 		id       uint
 	)
-	libraries := make([]LibraryResponse, 0, args.PerPage)
+	libraries := make([]models.LibraryResponse, 0, args.PerPage)
 	//added the below to display featuring flags for all admins per facility
 	selectIsFavoriteOrIsFeatured := `
 		libraries.*,
@@ -135,7 +104,7 @@ func (s *store) GetAllLibraries(args *queryContext, visibility string) ([]Librar
 	} else {
 		criteria, id = "f.user_id = ?", args.UserID
 	}
-	tx := s.db.WithContext(args.Ctx).Model(&Library{}).Preload("OpenContentProvider").Select(fmt.Sprintf(selectIsFavoriteOrIsFeatured, criteria), args.FacilityID, id)
+	tx := s.db.WithContext(args.Ctx).Model(&models.Library{}).Preload("OpenContentProvider").Select(fmt.Sprintf(selectIsFavoriteOrIsFeatured, criteria), args.FacilityID, id)
 	tx = tx.Joins(`left outer join facility_visibility_statuses fvs on fvs.open_content_provider_id = libraries.open_content_provider_id
 		and fvs.content_id = libraries.id
 		and fvs.facility_id = ?`, args.FacilityID)
@@ -233,8 +202,8 @@ func (s *store) GetAllLibraries(args *queryContext, visibility string) ([]Librar
 	return libraries, nil
 }
 
-func (s *store) GetLibraryByID(id int) (*Library, error) {
-	var library Library
+func (s *store) GetLibraryByID(id int) (*models.Library, error) {
+	var library models.Library
 	if err := s.db.Preload("OpenContentProvider").First(&library, "id = ?", id).Error; err != nil {
 		log.Errorln("Unable to find library with that ID")
 		return nil, newNotFoundDBError(err, "libraries")
@@ -242,8 +211,8 @@ func (s *store) GetLibraryByID(id int) (*Library, error) {
 	return &library, nil
 }
 
-func (s *store) OpenContentTitleSearch(args *queryContext) ([]OpenContentItem, error) {
-	var items []OpenContentItem
+func (s *store) OpenContentTitleSearch(args *models.QueryContext) ([]models.OpenContentItem, error) {
+	var items []models.OpenContentItem
 	searchQuery := `SELECT
 			'video' AS content_type,
 			v.id as content_id,
@@ -293,8 +262,8 @@ func (s *store) OpenContentTitleSearch(args *queryContext) ([]OpenContentItem, e
 	return items, nil
 }
 
-func (s *store) GetLibrariesByIDsAndLang(ids []int, language string) ([]Library, error) {
-	var libraries []Library
+func (s *store) GetLibrariesByIDsAndLang(ids []int, language string) ([]models.Library, error) {
+	var libraries []models.Library
 	tx := s.db.Preload("OpenContentProvider").Where("id in ?", ids)
 	if len(ids) > 1 {
 		tx.Where("language = ?", language)
@@ -309,9 +278,9 @@ func (s *store) GetLibrariesByIDsAndLang(ids []int, language string) ([]Library,
 // Retrieves all libraries by langauge using the given paramenters. A way to find out the different language values is to execute
 // an SQL query against the libraries table to see the different language values (column name is language).
 // language - the language of the library to retrieve
-func (s *store) GetAllLibrariesByLang(args *queryContext, language string) ([]Library, error) {
-	var libraries []Library
-	tx := s.db.WithContext(args.Ctx).Model(&Library{}).Preload("OpenContentProvider").Select("libraries.*").
+func (s *store) GetAllLibrariesByLang(args *models.QueryContext, language string) ([]models.Library, error) {
+	var libraries []models.Library
+	tx := s.db.WithContext(args.Ctx).Model(&models.Library{}).Preload("OpenContentProvider").Select("libraries.*").
 		Joins(`left outer join facility_visibility_statuses fvs on fvs.open_content_provider_id = libraries.open_content_provider_id
 			and fvs.content_id = libraries.id
 			and fvs.facility_id = ?`, args.FacilityID).
@@ -323,9 +292,9 @@ func (s *store) GetAllLibrariesByLang(args *queryContext, language string) ([]Li
 	return libraries, nil
 }
 
-func (s *store) ToggleVisibilityAndRetrieveLibrary(id int, args *queryContext) (*Library, error) {
-	var library Library
-	query := s.db.WithContext(args.Ctx).Model(&Library{}).Preload("OpenContentProvider").
+func (s *store) ToggleVisibilityAndRetrieveLibrary(id int, args *models.QueryContext) (*models.Library, error) {
+	var library models.Library
+	query := s.db.WithContext(args.Ctx).Model(&models.Library{}).Preload("OpenContentProvider").
 		Select("libraries.*, fvs.visibility_status").
 		Joins(`left outer join facility_visibility_statuses fvs on fvs.open_content_provider_id = libraries.open_content_provider_id
 			and fvs.content_id = libraries.id
@@ -353,8 +322,8 @@ func (s *store) ToggleVisibilityAndRetrieveLibrary(id int, args *queryContext) (
 	return &library, nil
 }
 
-func (s *store) GetLibraryFacilityVisibility(args *queryContext, id int) ([]ContentFacilityVisibility, error) {
-	var library Library
+func (s *store) GetLibraryFacilityVisibility(args *models.QueryContext, id int) ([]models.ContentFacilityVisibility, error) {
+	var library models.Library
 	if err := s.db.WithContext(args.Ctx).First(&library, "id = ?", id).Error; err != nil {
 		return nil, newNotFoundDBError(err, "libraries")
 	}
@@ -363,9 +332,9 @@ func (s *store) GetLibraryFacilityVisibility(args *queryContext, id int) ([]Cont
 
 // findLibraryProxy is the library the proxy forwards to, with its visibility
 // at facilityID.
-func (s *store) findLibraryProxy(id string, facilityID uint) (*Library, bool) {
-	var library Library
-	query := s.db.Model(&Library{}).Preload("OpenContentProvider").
+func (s *store) findLibraryProxy(id string, facilityID uint) (*models.Library, bool) {
+	var library models.Library
+	query := s.db.Model(&models.Library{}).Preload("OpenContentProvider").
 		Select("libraries.*, fvs.visibility_status").
 		Joins(`left outer join facility_visibility_statuses fvs on fvs.open_content_provider_id = libraries.open_content_provider_id
 					and fvs.content_id = libraries.id
@@ -378,9 +347,9 @@ func (s *store) findLibraryProxy(id string, facilityID uint) (*Library, bool) {
 
 // Tags
 
-func (s *store) GetTags() ([]Tag, error) {
-	var tags []Tag
-	if err := s.db.Model(&Tag{}).Find(&tags).Error; err != nil {
+func (s *store) GetTags() ([]models.Tag, error) {
+	var tags []models.Tag
+	if err := s.db.Model(&models.Tag{}).Find(&tags).Error; err != nil {
 		return nil, newNotFoundDBError(err, "tags")
 	}
 	return tags, nil
@@ -388,9 +357,9 @@ func (s *store) GetTags() ([]Tag, error) {
 
 // Videos
 
-func (s *store) GetVideoByID(id int, facilityId uint) (*Video, error) {
-	var video Video
-	query := s.db.Model(&Video{}).Preload("Attempts").
+func (s *store) GetVideoByID(id int, facilityId uint) (*models.Video, error) {
+	var video models.Video
+	query := s.db.Model(&models.Video{}).Preload("Attempts").
 		Select("videos.*, fvs.visibility_status").
 		Joins(`left outer join facility_visibility_statuses fvs on
 			fvs.open_content_provider_id = videos.open_content_provider_id and
@@ -405,9 +374,9 @@ func (s *store) GetVideoByID(id int, facilityId uint) (*Video, error) {
 
 // findVideoProxy is the video the proxy serves. A non-admin only gets a
 // video that is available and visible at their facility.
-func (s *store) findVideoProxy(id string, facilityID uint, isAdmin bool) (*Video, error) {
-	var video Video
-	tx := s.db.Model(&Video{}).
+func (s *store) findVideoProxy(id string, facilityID uint, isAdmin bool) (*models.Video, error) {
+	var video models.Video
+	tx := s.db.Model(&models.Video{}).
 		Select(`videos.*,
             (CASE WHEN fvs.visibility_status IS NULL THEN false ELSE fvs.visibility_status END) AS visibility_status`).
 		Joins(`LEFT OUTER JOIN facility_visibility_statuses fvs
@@ -426,9 +395,9 @@ func (s *store) findVideoProxy(id string, facilityID uint, isAdmin bool) (*Video
 	return &video, nil
 }
 
-func (s *store) GetVideoProvider() (*OpenContentProvider, error) {
-	var provider OpenContentProvider
-	if err := s.db.First(&provider, "title = ?", Youtube).Error; err != nil {
+func (s *store) GetVideoProvider() (*models.OpenContentProvider, error) {
+	var provider models.OpenContentProvider
+	if err := s.db.First(&provider, "title = ?", models.Youtube).Error; err != nil {
 		return nil, newNotFoundDBError(err, "open_content_providers")
 	}
 	return &provider, nil
@@ -437,7 +406,7 @@ func (s *store) GetVideoProvider() (*OpenContentProvider, error) {
 // GetEnabledProviderID is the first enabled content provider with this
 // title, or zero if none is enabled.
 func (s *store) GetEnabledProviderID(ctx context.Context, title string) (uint, error) {
-	providers := make([]OpenContentProvider, 0, 1)
+	providers := make([]models.OpenContentProvider, 0, 1)
 	if err := s.db.WithContext(ctx).Find(&providers, "currently_enabled = true AND title = ?", title).Error; err != nil {
 		return 0, newGetRecordsDBError(err, "open_content_providers")
 	}
@@ -451,8 +420,8 @@ func (s *store) GetEnabledProviderID(ctx context.Context, title string) (uint, e
 
 // GetJobProvider is the content provider a job message names. An ID with no
 // row gives an empty provider, not an error.
-func (s *store) GetJobProvider(ctx context.Context, id int) (*OpenContentProvider, error) {
-	var provider OpenContentProvider
+func (s *store) GetJobProvider(ctx context.Context, id int) (*models.OpenContentProvider, error) {
+	var provider models.OpenContentProvider
 	if err := s.db.WithContext(ctx).Find(&provider, id).Error; err != nil {
 		return nil, newGetRecordsDBError(err, "open_content_providers")
 	}
@@ -460,10 +429,10 @@ func (s *store) GetJobProvider(ctx context.Context, id int) (*OpenContentProvide
 }
 
 // UpsertLibrary saves lib, or updates the library with lib's external ID.
-func (s *store) UpsertLibrary(ctx context.Context, lib *Library) error {
+func (s *store) UpsertLibrary(ctx context.Context, lib *models.Library) error {
 	if err := s.db.WithContext(ctx).
-		Where(&Library{ExternalID: lib.ExternalID}).
-		Assign(Library{
+		Where(&models.Library{ExternalID: lib.ExternalID}).
+		Assign(models.Library{
 			Url:          lib.Url,
 			Title:        lib.Title,
 			Description:  lib.Description,
@@ -479,7 +448,7 @@ func (s *store) UpsertLibrary(ctx context.Context, lib *Library) error {
 // DeleteLibrariesNotIn deletes the provider's libraries whose external ID
 // isn't in externalIDs, and returns how many it deleted.
 func (s *store) DeleteLibrariesNotIn(ctx context.Context, providerID uint, externalIDs []string) (int64, error) {
-	tx := s.db.WithContext(ctx).Where("open_content_provider_id = ?", providerID).Delete(&Library{}, "external_id NOT IN (?)", externalIDs)
+	tx := s.db.WithContext(ctx).Where("open_content_provider_id = ?", providerID).Delete(&models.Library{}, "external_id NOT IN (?)", externalIDs)
 	if tx.Error != nil {
 		return 0, newDeleteDBError(tx.Error, "libraries")
 	}
@@ -488,7 +457,7 @@ func (s *store) DeleteLibrariesNotIn(ctx context.Context, providerID uint, exter
 
 func (s *store) CountVideos(ctx context.Context) (int64, error) {
 	var count int64
-	if err := s.db.WithContext(ctx).Model(&Video{}).Count(&count).Error; err != nil {
+	if err := s.db.WithContext(ctx).Model(&models.Video{}).Count(&count).Error; err != nil {
 		return 0, newGetRecordsDBError(err, "videos")
 	}
 	return count, nil
@@ -498,33 +467,33 @@ func (s *store) CountVideos(ctx context.Context) (int64, error) {
 // saved video.
 func (s *store) GetSavedVideoExternalIDs(ctx context.Context, externalIDs []string) ([]string, error) {
 	var saved []string
-	if err := s.db.WithContext(ctx).Model(&Video{}).Where("external_id IN ?", externalIDs).Pluck("external_id", &saved).Error; err != nil {
+	if err := s.db.WithContext(ctx).Model(&models.Video{}).Where("external_id IN ?", externalIDs).Pluck("external_id", &saved).Error; err != nil {
 		return nil, newGetRecordsDBError(err, "videos")
 	}
 	return saved, nil
 }
 
 // GetVideosNotIn is the saved videos whose external ID isn't in externalIDs.
-func (s *store) GetVideosNotIn(ctx context.Context, externalIDs []string) ([]Video, error) {
-	var videos []Video
-	if err := s.db.WithContext(ctx).Model(&Video{}).Where("external_id NOT IN ?", externalIDs).Find(&videos).Error; err != nil {
+func (s *store) GetVideosNotIn(ctx context.Context, externalIDs []string) ([]models.Video, error) {
+	var videos []models.Video
+	if err := s.db.WithContext(ctx).Model(&models.Video{}).Where("external_id NOT IN ?", externalIDs).Find(&videos).Error; err != nil {
 		return nil, newGetRecordsDBError(err, "videos")
 	}
 	return videos, nil
 }
 
 // GetUnavailableVideos is the videos still processing or that failed.
-func (s *store) GetUnavailableVideos(ctx context.Context) ([]Video, error) {
-	videos := make([]Video, 0)
-	if err := s.db.WithContext(ctx).Model(&Video{}).Find(&videos, "availability <> 'available'").Error; err != nil {
+func (s *store) GetUnavailableVideos(ctx context.Context) ([]models.Video, error) {
+	videos := make([]models.Video, 0)
+	if err := s.db.WithContext(ctx).Model(&models.Video{}).Find(&videos, "availability <> 'available'").Error; err != nil {
 		return nil, newGetRecordsDBError(err, "videos")
 	}
 	return videos, nil
 }
 
 // GetVideoWithAttempts is a video and its download attempts.
-func (s *store) GetVideoWithAttempts(ctx context.Context, id int) (*Video, error) {
-	var video Video
+func (s *store) GetVideoWithAttempts(ctx context.Context, id int) (*models.Video, error) {
+	var video models.Video
 	if err := s.db.WithContext(ctx).Preload("Attempts").First(&video, id).Error; err != nil {
 		return nil, newNotFoundDBError(err, "videos")
 	}
@@ -541,20 +510,20 @@ func (s *store) VideoURLExists(ctx context.Context, url string) (bool, error) {
 
 func (s *store) videoExists(ctx context.Context, query string, arg string) (bool, error) {
 	var exists bool
-	if err := s.db.WithContext(ctx).Model(&Video{}).Select("count(*) > 0").Where(query, arg).Scan(&exists).Error; err != nil {
+	if err := s.db.WithContext(ctx).Model(&models.Video{}).Select("count(*) > 0").Where(query, arg).Scan(&exists).Error; err != nil {
 		return false, newGetRecordsDBError(err, "videos")
 	}
 	return exists, nil
 }
 
-func (s *store) CreateVideo(ctx context.Context, video *Video) error {
+func (s *store) CreateVideo(ctx context.Context, video *models.Video) error {
 	if err := s.db.WithContext(ctx).Create(video).Error; err != nil {
 		return newCreateDBError(err, "videos")
 	}
 	return nil
 }
 
-func (s *store) SaveVideo(ctx context.Context, video *Video) error {
+func (s *store) SaveVideo(ctx context.Context, video *models.Video) error {
 	if err := s.db.WithContext(ctx).Save(video).Error; err != nil {
 		return newUpdateDBError(err, "videos")
 	}
@@ -563,13 +532,13 @@ func (s *store) SaveVideo(ctx context.Context, video *Video) error {
 
 func (s *store) CountVideoDownloadAttempts(ctx context.Context, videoID uint) (int64, error) {
 	var count int64
-	if err := s.db.WithContext(ctx).Model(&VideoDownloadAttempt{}).Where("video_id = ?", videoID).Count(&count).Error; err != nil {
+	if err := s.db.WithContext(ctx).Model(&models.VideoDownloadAttempt{}).Where("video_id = ?", videoID).Count(&count).Error; err != nil {
 		return 0, newGetRecordsDBError(err, "video_download_attempts")
 	}
 	return count, nil
 }
 
-func (s *store) CreateVideoDownloadAttempt(ctx context.Context, attempt *VideoDownloadAttempt) error {
+func (s *store) CreateVideoDownloadAttempt(ctx context.Context, attempt *models.VideoDownloadAttempt) error {
 	if err := s.db.WithContext(ctx).Create(attempt).Error; err != nil {
 		return newCreateDBError(err, "video_download_attempts")
 	}
@@ -577,7 +546,7 @@ func (s *store) CreateVideoDownloadAttempt(ctx context.Context, attempt *VideoDo
 }
 
 func (s *store) FavoriteOpenContent(contentID int, ocpID uint, userID uint, facilityID *uint) (bool, error) {
-	fav := OpenContentFavorite{
+	fav := models.OpenContentFavorite{
 		ContentID:             uint(contentID),
 		OpenContentProviderID: ocpID,
 		UserID:                userID,
@@ -591,7 +560,7 @@ func (s *store) FavoriteOpenContent(contentID int, ocpID uint, userID uint, faci
 	} else {
 		tx = tx.Where("user_id = ?", userID)
 	}
-	if tx.First(&OpenContentFavorite{}).RowsAffected > 0 {
+	if tx.First(&models.OpenContentFavorite{}).RowsAffected > 0 {
 		delTx := s.db.Where("content_id = ? AND open_content_provider_id = ?  ", contentID, ocpID).
 			Where("open_content_url_id IS NULL OR name IS NULL OR name = ''")
 		if facilityID != nil {
@@ -611,9 +580,9 @@ func (s *store) FavoriteOpenContent(contentID int, ocpID uint, userID uint, faci
 	}
 }
 
-func (s *store) GetAllVideos(args *queryContext, visibility string) ([]VideoResponse, error) {
-	var videos []VideoResponse
-	tx := s.db.WithContext(args.Ctx).Model(&Video{}).Preload("Attempts").Select(`
+func (s *store) GetAllVideos(args *models.QueryContext, visibility string) ([]models.VideoResponse, error) {
+	var videos []models.VideoResponse
+	tx := s.db.WithContext(args.Ctx).Model(&models.Video{}).Preload("Attempts").Select(`
 	videos.*,
         CASE WHEN fvs.visibility_status is null then false
         else fvs.visibility_status
@@ -665,8 +634,8 @@ func (s *store) GetAllVideos(args *queryContext, visibility string) ([]VideoResp
 }
 
 func (s *store) ToggleVideoVisibility(ctx context.Context, id int, facilityId uint) error {
-	var video Video
-	query := s.db.WithContext(ctx).Model(&Video{}).
+	var video models.Video
+	query := s.db.WithContext(ctx).Model(&models.Video{}).
 		Select("videos.*, fvs.visibility_status").
 		Joins(`left outer join facility_visibility_statuses fvs on fvs.open_content_provider_id = videos.open_content_provider_id
 			and fvs.content_id = videos.id
@@ -692,8 +661,8 @@ func (s *store) ToggleVideoVisibility(ctx context.Context, id int, facilityId ui
 	return nil
 }
 
-func (s *store) GetVideoFacilityVisibility(args *queryContext, id int) ([]ContentFacilityVisibility, error) {
-	var video Video
+func (s *store) GetVideoFacilityVisibility(args *models.QueryContext, id int) ([]models.ContentFacilityVisibility, error) {
+	var video models.Video
 	if err := s.db.WithContext(args.Ctx).First(&video, "id = ?", id).Error; err != nil {
 		return nil, newNotFoundDBError(err, "videos")
 	}
@@ -701,7 +670,7 @@ func (s *store) GetVideoFacilityVisibility(args *queryContext, id int) ([]Conten
 }
 
 func (s *store) DeleteVideo(id int) error {
-	vid := Video{}
+	vid := models.Video{}
 	vid.ID = uint(id)
 	if err := s.db.Delete(&vid).Error; err != nil {
 		return newCreateDBError(err, "videos")
@@ -711,8 +680,8 @@ func (s *store) DeleteVideo(id int) error {
 
 // Helpful links
 
-func (s *store) GetHelpfulLinks(args *queryContext, onlyVisible bool) ([]HelpfulLinkResp, error) {
-	links := make([]HelpfulLinkResp, 0, args.PerPage)
+func (s *store) GetHelpfulLinks(args *models.QueryContext, onlyVisible bool) ([]models.HelpfulLinkResp, error) {
+	links := make([]models.HelpfulLinkResp, 0, args.PerPage)
 
 	subQuery := s.db.Table("open_content_favorites f").
 		Select("1").
@@ -722,7 +691,7 @@ func (s *store) GetHelpfulLinks(args *queryContext, onlyVisible bool) ([]Helpful
 		Select("1").
 		Where(`ff.content_id = helpful_links.id AND ff.facility_id = ?
 			AND ff.open_content_provider_id = helpful_links.open_content_provider_id`, args.FacilityID)
-	tx := s.db.Model(&HelpfulLink{}).
+	tx := s.db.Model(&models.HelpfulLink{}).
 		Select(`helpful_links.*,
 			COALESCE(fvs.visibility_status, false) AS visibility_status,
 			`+visibleFacilityCountSubquery("helpful_links")+`,
@@ -755,15 +724,15 @@ func (s *store) GetHelpfulLinks(args *queryContext, onlyVisible bool) ([]Helpful
 	return links, nil
 }
 
-func (s *store) AddHelpfulLink(ctx context.Context, args *queryContext, link *HelpfulLink) error {
+func (s *store) AddHelpfulLink(ctx context.Context, args *models.QueryContext, link *models.HelpfulLink) error {
 	db := s.db.WithContext(ctx)
-	if db.Where("url = ?", link.Url).First(&HelpfulLink{}).RowsAffected > 0 {
+	if db.Where("url = ?", link.Url).First(&models.HelpfulLink{}).RowsAffected > 0 {
 		return newDBError(fmt.Errorf("link already exists"), "existing_helpful_link")
 	}
 	if err := db.Create(link).Error; err != nil {
 		return newCreateDBError(err, "helpful_links")
 	}
-	return s.UpsertFacilityVisibilityStatuses(args, []FacilityVisibilityStatus{{
+	return s.UpsertFacilityVisibilityStatuses(args, []models.FacilityVisibilityStatus{{
 		FacilityID:            args.FacilityID,
 		OpenContentProviderID: link.OpenContentProviderID,
 		ContentID:             link.ID,
@@ -773,30 +742,30 @@ func (s *store) AddHelpfulLink(ctx context.Context, args *queryContext, link *He
 
 func (s *store) DeleteLink(ctx context.Context, id uint) error {
 	db := s.db.WithContext(ctx)
-	var link HelpfulLink
-	if err := db.Model(&HelpfulLink{}).Where("id = ?", id).First(&link).Error; err != nil {
+	var link models.HelpfulLink
+	if err := db.Model(&models.HelpfulLink{}).Where("id = ?", id).First(&link).Error; err != nil {
 		return newGetRecordsDBError(err, "helpful_links")
 	}
 	if err := db.Unscoped().Delete(&link).Error; err != nil {
 		return newDeleteDBError(err, "helpful_links")
 	}
 	if err := db.Where("content_id = ? AND open_content_provider_id = ?", link.ID, link.OpenContentProviderID).
-		Delete(&FacilityVisibilityStatus{}).Error; err != nil {
+		Delete(&models.FacilityVisibilityStatus{}).Error; err != nil {
 		return newDeleteDBError(err, "facility_visibility_statuses")
 	}
 	return nil
 }
 
-func (s *store) EditLink(ctx context.Context, id uint, link HelpfulLink) error {
-	if err := s.db.WithContext(ctx).Model(&HelpfulLink{}).Where("id = ?", id).Updates(link).Error; err != nil {
+func (s *store) EditLink(ctx context.Context, id uint, link models.HelpfulLink) error {
+	if err := s.db.WithContext(ctx).Model(&models.HelpfulLink{}).Where("id = ?", id).Updates(link).Error; err != nil {
 		return newUpdateDBError(err, "helpful_links")
 	}
 	return nil
 }
 
-func (s *store) ToggleVisibilityStatus(ctx context.Context, args *queryContext, id int) error {
-	var link HelpfulLink
-	if err := s.db.WithContext(ctx).Model(&HelpfulLink{}).
+func (s *store) ToggleVisibilityStatus(ctx context.Context, args *models.QueryContext, id int) error {
+	var link models.HelpfulLink
+	if err := s.db.WithContext(ctx).Model(&models.HelpfulLink{}).
 		Select(`helpful_links.*, COALESCE(fvs.visibility_status, false) AS visibility_status`).
 		Joins(`LEFT JOIN facility_visibility_statuses fvs ON fvs.open_content_provider_id = helpful_links.open_content_provider_id
 			AND fvs.content_id = helpful_links.id
@@ -804,7 +773,7 @@ func (s *store) ToggleVisibilityStatus(ctx context.Context, args *queryContext, 
 		Where("helpful_links.id = ?", id).First(&link).Error; err != nil {
 		return newGetRecordsDBError(err, "helpful_links")
 	}
-	return s.UpsertFacilityVisibilityStatuses(args, []FacilityVisibilityStatus{{
+	return s.UpsertFacilityVisibilityStatuses(args, []models.FacilityVisibilityStatus{{
 		FacilityID:            args.FacilityID,
 		OpenContentProviderID: link.OpenContentProviderID,
 		ContentID:             link.ID,
@@ -812,25 +781,25 @@ func (s *store) ToggleVisibilityStatus(ctx context.Context, args *queryContext, 
 	}}, !link.VisibilityStatus)
 }
 
-func (s *store) GetHelpfulLinkFacilityVisibility(args *queryContext, id int) ([]ContentFacilityVisibility, error) {
-	var link HelpfulLink
+func (s *store) GetHelpfulLinkFacilityVisibility(args *models.QueryContext, id int) ([]models.ContentFacilityVisibility, error) {
+	var link models.HelpfulLink
 	if err := s.db.WithContext(args.Ctx).First(&link, "id = ?", id).Error; err != nil {
 		return nil, newNotFoundDBError(err, "helpful_links")
 	}
 	return s.getContentFacilityVisibility(args, link.ID, link.OpenContentProviderID)
 }
 
-func (s *store) GetLinkFromId(id uint) (*HelpfulLink, error) {
-	var link HelpfulLink
-	if err := s.db.Model(&HelpfulLink{}).Where("id = ?", id).First(&link).Error; err != nil {
+func (s *store) GetLinkFromId(id uint) (*models.HelpfulLink, error) {
+	var link models.HelpfulLink
+	if err := s.db.Model(&models.HelpfulLink{}).Where("id = ?", id).First(&link).Error; err != nil {
 		return nil, newGetRecordsDBError(err, "helpful_links")
 	}
 	return &link, nil
 }
 
 func (s *store) GetHelpfulLinkOpenContentProviderId() (uint, error) {
-	var provider OpenContentProvider
-	if err := s.db.Model(&OpenContentProvider{}).Where("title = ?", "HelpfulLinks").First(&provider).Error; err != nil {
+	var provider models.OpenContentProvider
+	if err := s.db.Model(&models.OpenContentProvider{}).Where("title = ?", "HelpfulLinks").First(&provider).Error; err != nil {
 		return 0, newGetRecordsDBError(err, "open_content_providers")
 	}
 	return provider.ID, nil
@@ -838,20 +807,20 @@ func (s *store) GetHelpfulLinkOpenContentProviderId() (uint, error) {
 
 // Providers, activity and favorites
 
-func (s *store) GetOpenContent(all bool) ([]OpenContentProvider, error) {
-	tx := s.db.Model(&OpenContentProvider{})
+func (s *store) GetOpenContent(all bool) ([]models.OpenContentProvider, error) {
+	tx := s.db.Model(&models.OpenContentProvider{})
 	if !all {
 		tx = tx.Where("currently_enabled = ?", true)
 	}
-	openContent := make([]OpenContentProvider, 0, 3)
+	openContent := make([]models.OpenContentProvider, 0, 3)
 	if err := tx.Find(&openContent).Error; err != nil {
 		return nil, newNotFoundDBError(err, "open_content_providers")
 	}
 	return openContent, nil
 }
 
-func (s *store) CreateContentActivity(urlString string, activity *OpenContentActivity) {
-	url := OpenContentUrl{}
+func (s *store) CreateContentActivity(urlString string, activity *models.OpenContentActivity) {
+	url := models.OpenContentUrl{}
 	if s.db.Where("content_url = ?", urlString).First(&url).RowsAffected == 0 {
 		url.ContentURL = urlString
 		if err := s.db.Create(&url).Error; err != nil {
@@ -866,23 +835,23 @@ func (s *store) CreateContentActivity(urlString string, activity *OpenContentAct
 }
 
 func (s *store) UpdateOpenContentActivityStopTS(activityID int64) {
-	if err := s.db.Model(&OpenContentActivity{}).Where("id = ?", activityID).Update("stop_ts", time.Now()).Error; err != nil {
+	if err := s.db.Model(&models.OpenContentActivity{}).Where("id = ?", activityID).Update("stop_ts", time.Now()).Error; err != nil {
 		log.Errorf("error updating open content activity: %v", err)
 	}
 }
 
 // isBookmarked reports whether the user has bookmarked the page an activity
 // visited.
-func (s *store) isBookmarked(activity *OpenContentActivity) bool {
-	var bookmark OpenContentFavorite
-	return s.db.Model(&OpenContentFavorite{}).Where("user_id = ? AND content_id = ? AND open_content_url_id = ?", activity.UserID, activity.ContentID, activity.OpenContentUrlID).First(&bookmark).RowsAffected > 0
+func (s *store) isBookmarked(activity *models.OpenContentActivity) bool {
+	var bookmark models.OpenContentFavorite
+	return s.db.Model(&models.OpenContentFavorite{}).Where("user_id = ? AND content_id = ? AND open_content_url_id = ?", activity.UserID, activity.ContentID, activity.OpenContentUrlID).First(&bookmark).RowsAffected > 0
 }
 
 // featureBranchGuard returns a SQL fragment that empties one branch of the
 // favorites UNION when the caller's facility has that content type's sub-feature
 // disabled. It is a constant, never user input, so it binds no arguments and
 // leaves the surrounding query's positional argument list untouched.
-func featureBranchGuard(args *queryContext, feature features.Access) string {
+func featureBranchGuard(args *models.QueryContext, feature features.Access) string {
 	if args.HasFeature(feature) {
 		return ""
 	}
@@ -890,8 +859,8 @@ func featureBranchGuard(args *queryContext, feature features.Access) string {
 }
 
 // This method will at most ever return the most recent 30 favorites (10 Libraries, 10 Videos, 10 Helpful Links)
-func (s *store) GetUserFavoriteGroupings(args *queryContext) ([]OpenContentItem, error) {
-	favorites := make([]OpenContentItem, 0, 30)
+func (s *store) GetUserFavoriteGroupings(args *models.QueryContext) ([]models.OpenContentItem, error) {
+	favorites := make([]models.OpenContentItem, 0, 30)
 	favoritesQuery := fmt.Sprintf(`WITH ordered_libraries AS (
 		SELECT
 			'library' AS content_type,
@@ -998,7 +967,7 @@ func (s *store) GetUserFavoriteGroupings(args *queryContext) ([]OpenContentItem,
 	return favorites, nil
 }
 
-func (s *store) GetUserFavorites(args *queryContext) ([]OpenContentItem, error) {
+func (s *store) GetUserFavorites(args *models.QueryContext) ([]models.OpenContentItem, error) {
 	var libSearchCond, videoSearchCond, hlSearchCond string
 	var searchTerm string
 
@@ -1148,7 +1117,7 @@ func (s *store) GetUserFavorites(args *queryContext) ([]OpenContentItem, error) 
     ORDER BY %s
 	LIMIT ? OFFSET ?`, libSearchCond, videoSearchCond, hlSearchCond, args.OrderClause("all_favorites.created_at desc"))
 
-	var favorites []OpenContentItem
+	var favorites []models.OpenContentItem
 	if err := s.db.WithContext(args.Ctx).Raw(favoritesQuery, queryArgs...).Scan(&favorites).Error; err != nil {
 		return nil, err
 	}
@@ -1156,20 +1125,10 @@ func (s *store) GetUserFavorites(args *queryContext) ([]OpenContentItem, error) 
 	return favorites, nil
 }
 
-// OpenContentParams is a bookmark to add (with a name) or remove (with a
-// URL).
-type OpenContentParams struct {
-	Name                  string `json:"name"`
-	UserID                uint   `json:"user_id"`
-	ContentURL            string `json:"content_url"`
-	ContentID             uint   `json:"content_id"`
-	OpenContentProviderID uint   `json:"open_content_provider_id"`
-}
-
-func (s *store) BookmarkOpenContent(params *OpenContentParams) error {
+func (s *store) BookmarkOpenContent(params *models.OpenContentParams) error {
 	if params.Name != "" {
-		var activity OpenContentActivity
-		if err := s.db.Model(&OpenContentActivity{}).
+		var activity models.OpenContentActivity
+		if err := s.db.Model(&models.OpenContentActivity{}).
 			Where("user_id = ? AND content_id = ? AND open_content_provider_id = ?",
 				params.UserID, params.ContentID, params.OpenContentProviderID).
 			Order("request_ts DESC").
@@ -1177,19 +1136,19 @@ func (s *store) BookmarkOpenContent(params *OpenContentParams) error {
 			log.Infof("activity %v", activity)
 			return newNotFoundDBError(err, "open_content_activities")
 		}
-		newFav := OpenContentFavorite{
+		newFav := models.OpenContentFavorite{
 			UserID:                params.UserID,
 			ContentID:             params.ContentID,
 			OpenContentProviderID: params.OpenContentProviderID,
-			Name:                  nilIfBlank(params.Name),
+			Name:                  models.NilIfBlank(params.Name),
 			OpenContentUrlID:      &activity.OpenContentUrlID,
 		}
 		if err := s.db.Create(&newFav).Error; err != nil {
 			return newNotFoundDBError(err, "open_content_favorites")
 		}
 	} else if params.ContentURL != "" {
-		var url OpenContentUrl
-		if err := s.db.Model(&OpenContentUrl{}).
+		var url models.OpenContentUrl
+		if err := s.db.Model(&models.OpenContentUrl{}).
 			Where("content_url = ?", params.ContentURL).
 			First(&url).Error; err != nil {
 			log.Infof("No matching URL found for %s", params.ContentURL)
@@ -1197,7 +1156,7 @@ func (s *store) BookmarkOpenContent(params *OpenContentParams) error {
 		}
 		if err := s.db.Where("user_id = ? AND content_id = ? AND open_content_url_id = ? AND open_content_provider_id = ?",
 			params.UserID, params.ContentID, &url.ID, params.OpenContentProviderID).
-			Delete(&OpenContentFavorite{}).Error; err != nil {
+			Delete(&models.OpenContentFavorite{}).Error; err != nil {
 			return newNotFoundDBError(err, "open_content_favorites")
 		}
 	} else {
@@ -1206,8 +1165,8 @@ func (s *store) BookmarkOpenContent(params *OpenContentParams) error {
 	return nil
 }
 
-func (s *store) GetTopFacilityOpenContent(id int) ([]OpenContentItem, error) {
-	var content []OpenContentItem
+func (s *store) GetTopFacilityOpenContent(id int) ([]models.OpenContentItem, error) {
+	var content []models.OpenContentItem
 	if err := s.db.Raw("? UNION ? ORDER BY visits DESC LIMIT 5",
 		s.db.Select("fvs.visibility_status, v.title, v.url, v.thumbnail_url, v.open_content_provider_id, v.id as content_id, 'video' as content_type, count(v.id) as visits").
 			Table("open_content_activities oca").
@@ -1233,8 +1192,8 @@ func (s *store) GetTopFacilityOpenContent(id int) ([]OpenContentItem, error) {
 	return content, nil
 }
 
-func (s *store) GetTopUserOpenContent(id int, args *queryContext) ([]OpenContentItem, error) {
-	var content []OpenContentItem
+func (s *store) GetTopUserOpenContent(id int, args *models.QueryContext) ([]models.OpenContentItem, error) {
+	var content []models.OpenContentItem
 	if err := s.db.WithContext(args.Ctx).Raw("? UNION ? ORDER BY visits DESC LIMIT 5",
 		s.db.Select("fvs.visibility_status, v.title, v.url, v.thumbnail_url, v.open_content_provider_id, v.id as content_id, 'video' as content_type, count(v.id) as visits").
 			Table("open_content_activities oca").
@@ -1258,8 +1217,8 @@ func (s *store) GetTopUserOpenContent(id int, args *queryContext) ([]OpenContent
 	return content, nil
 }
 
-func (s *store) GetTopFacilityLibraries(args *queryContext, id int, perPage int, start, end *time.Time) ([]OpenContentItem, error) {
-	libraries := make([]OpenContentItem, 0, perPage)
+func (s *store) GetTopFacilityLibraries(args *models.QueryContext, id int, perPage int, start, end *time.Time) ([]models.OpenContentItem, error) {
+	libraries := make([]models.OpenContentItem, 0, perPage)
 	tx := s.db.WithContext(args.Ctx).Table("open_content_activities oca").
 		Select("l.title, l.url, l.thumbnail_url as thumbnail_url, l.open_content_provider_id, l.id as content_id, 'library' as type, count(l.id) as visits").
 		Joins("JOIN libraries l on l.id = oca.content_id AND l.open_content_provider_id = oca.open_content_provider_id and l.deleted_at is null").

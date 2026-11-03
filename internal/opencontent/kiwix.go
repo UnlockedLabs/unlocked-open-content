@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/UnlockedLabs/unlocked-open-content/internal/models"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -25,7 +26,7 @@ type KiwixService struct {
 	store                 *store
 }
 
-func NewKiwixService(openContentProvider *OpenContentProvider, store *store, params map[string]any) *KiwixService {
+func NewKiwixService(openContentProvider *models.OpenContentProvider, store *store, params map[string]any) *KiwixService {
 	url := fmt.Sprintf("%s%s%d", openContentProvider.Url, KiwixCatalogUrl, maxLibraries)
 	client := http.Client{}
 	return &KiwixService{
@@ -63,7 +64,7 @@ func (ks *KiwixService) ImportLibraries(ctx context.Context) error {
 	//remove unencoded &'s from xml
 	replacer := strings.NewReplacer("&", "&amp;")
 	xmlBody := replacer.Replace(string(body))
-	var feed Feed
+	var feed models.Feed
 	err = xml.Unmarshal([]byte(xmlBody), &feed)
 	if err != nil {
 		log.Errorf("error parsing data: %v", err)
@@ -95,7 +96,7 @@ func (ks *KiwixService) ImportLibraries(ctx context.Context) error {
 	return nil
 }
 
-func (ks *KiwixService) UpdateOrInsertLibrary(ctx context.Context, entry Entry, providerId uint) error {
+func (ks *KiwixService) UpdateOrInsertLibrary(ctx context.Context, entry models.Entry, providerId uint) error {
 	log.Infof("Attempting to insert or update library from Kiwix: %v", entry.Title)
 	library := ks.IntoLibrary(entry, providerId)
 	if err := ks.store.UpsertLibrary(ctx, library); err != nil {

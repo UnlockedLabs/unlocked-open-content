@@ -3,9 +3,7 @@ package opencontent
 import (
 	"bytes"
 	"encoding/json"
-	"encoding/xml"
 	"fmt"
-	"html"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -13,70 +11,24 @@ import (
 	"os"
 	"strings"
 
+	"github.com/UnlockedLabs/unlocked-open-content/internal/models"
 	log "github.com/sirupsen/logrus"
 )
-
-type Feed struct {
-	XMLName xml.Name `xml:"feed"`
-	Entries []Entry  `xml:"entry"`
-}
-
-type Entry struct {
-	ID           string       `xml:"id"`
-	Title        string       `xml:"title"`
-	Updated      string       `xml:"updated"`
-	Summary      CustomString `xml:"summary"`
-	Language     string       `xml:"language"`
-	Name         string       `xml:"name"`
-	Flavour      string       `xml:"flavour"`
-	Category     string       `xml:"category"`
-	Tags         string       `xml:"tags"`
-	ArticleCount int          `xml:"articleCount"`
-	MediaCount   int          `xml:"mediaCount"`
-	Author       Author       `xml:"author"`
-	Publisher    Publisher    `xml:"publisher"`
-	Links        []Link       `xml:"link"`
-}
-
-type CustomString string
-
-func (cst *CustomString) UnmarshalXML(dec *xml.Decoder, start xml.StartElement) error {
-	var summary string
-	if err := dec.DecodeElement(&summary, &start); err != nil {
-		return err
-	}
-	*cst = CustomString(html.UnescapeString(summary))
-	return nil
-}
-
-type Author struct {
-	Name string `xml:"name"`
-}
-
-type Publisher struct {
-	Name string `xml:"name"`
-}
-
-type Link struct {
-	Rel  string `xml:"rel,attr"`
-	Href string `xml:"href,attr"`
-	Type string `xml:"type,attr"`
-}
 
 const (
 	MinImgSize = 150
 )
 
-func (ks *KiwixService) IntoLibrary(entry Entry, providerId uint) *Library {
+func (ks *KiwixService) IntoLibrary(entry models.Entry, providerId uint) *models.Library {
 	url, thumbnailURL := ks.ParseUrls(entry.Title, entry.Links)
-	return &Library{
+	return &models.Library{
 		OpenContentProviderID: providerId,
-		ExternalID:            stringPtr(entry.ID),
+		ExternalID:            models.StringPtr(entry.ID),
 		Title:                 entry.Title,
-		Language:              stringPtr(entry.Language),
-		Description:           stringPtr(string(entry.Summary)),
+		Language:              models.StringPtr(entry.Language),
+		Description:           models.StringPtr(string(entry.Summary)),
 		Url:                   url,
-		ThumbnailUrl:          stringPtr(thumbnailURL),
+		ThumbnailUrl:          models.StringPtr(thumbnailURL),
 	}
 }
 
@@ -224,7 +176,7 @@ func (ks *KiwixService) thumbnailExists(lib string) bool {
 	return true
 }
 
-func (ks *KiwixService) ParseUrls(externId string, links []Link) (string, string) {
+func (ks *KiwixService) ParseUrls(externId string, links []models.Link) (string, string) {
 	var url string
 	var thumbnailURL string
 	for _, link := range links {

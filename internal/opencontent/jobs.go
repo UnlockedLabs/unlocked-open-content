@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/UnlockedLabs/unlocked-contracts/jobs"
+	"github.com/UnlockedLabs/unlocked-open-content/internal/models"
 	"github.com/go-co-op/gocron/v2"
 	"github.com/nats-io/nats.go"
 	log "github.com/sirupsen/logrus"
@@ -92,9 +93,9 @@ type jobPublisher struct {
 // library jobs, YouTube for the video jobs. With none enabled it publishes
 // nothing.
 func (p *jobPublisher) run(ctx context.Context, job jobs.Type) {
-	title := Youtube
+	title := models.Youtube
 	if job.IsLibraryJob() {
-		title = Kiwix
+		title = models.Kiwix
 	}
 	providerID, err := p.store.GetEnabledProviderID(ctx, title)
 	if err != nil {
@@ -131,7 +132,7 @@ func scheduledJobMsg(job jobs.Type, providerID uint) (*nats.Msg, error) {
 }
 
 // addVideosMsg asks the worker to download new videos.
-func addVideosMsg(videoUrls []string, provider *OpenContentProvider) (*nats.Msg, error) {
+func addVideosMsg(videoUrls []string, provider *models.OpenContentProvider) (*nats.Msg, error) {
 	msg := nats.NewMsg(jobs.AddVideos.PubName())
 	body := make(map[string]any)
 	body["open_content_provider_id"] = provider.ID
@@ -147,7 +148,7 @@ func addVideosMsg(videoUrls []string, provider *OpenContentProvider) (*nats.Msg,
 
 // retryManualDownloadMsg asks the worker to try a failed video download
 // again. Its job_type is retry_video_downloads, as it was in core.
-func retryManualDownloadMsg(video *Video) (*nats.Msg, error) {
+func retryManualDownloadMsg(video *models.Video) (*nats.Msg, error) {
 	msg := nats.NewMsg(jobs.RetryManualDownload.PubName())
 	body := make(map[string]any)
 	body["video_id"] = video.ID

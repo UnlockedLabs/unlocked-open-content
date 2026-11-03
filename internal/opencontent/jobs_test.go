@@ -11,6 +11,7 @@ import (
 
 	"github.com/UnlockedLabs/unlocked-contracts/jobs"
 
+	"github.com/UnlockedLabs/unlocked-open-content/internal/models"
 	"github.com/nats-io/nats.go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -28,7 +29,7 @@ func TestJobMessages(t *testing.T) {
 	})
 
 	t.Run("add videos", func(t *testing.T) {
-		provider := &OpenContentProvider{DatabaseFields: DatabaseFields{ID: 2}}
+		provider := &models.OpenContentProvider{DatabaseFields: models.DatabaseFields{ID: 2}}
 		msg, err := addVideosMsg([]string{"https://www.youtube.com/watch?v=a"}, provider)
 		require.NoError(t, err)
 		assert.Equal(t, "tasks.add_videos", msg.Subject)
@@ -36,7 +37,7 @@ func TestJobMessages(t *testing.T) {
 	})
 
 	t.Run("retry a download", func(t *testing.T) {
-		video := &Video{DatabaseFields: DatabaseFields{ID: 7}, OpenContentProviderID: 2}
+		video := &models.Video{DatabaseFields: models.DatabaseFields{ID: 7}, OpenContentProviderID: 2}
 		msg, err := retryManualDownloadMsg(video)
 		require.NoError(t, err)
 		assert.Equal(t, "tasks.retry_manual_download", msg.Subject)
@@ -112,8 +113,8 @@ func TestScheduleJobs(t *testing.T) {
 			t.Setenv("MIDDLEWARE_CRON_SCHEDULE", "0 22 * * *")
 			t.Setenv("RETRY_VIDEO_CRON_SCHEDULE", tt.retrySchedule)
 			db := newTestDB(t)
-			createProvider(t, db, Kiwix, true)
-			createProvider(t, db, Youtube, true)
+			createProvider(t, db, models.Kiwix, true)
+			createProvider(t, db, models.Youtube, true)
 			pub := &published{}
 			s := &fakeScheduler{cron: map[string][]func(){}}
 
@@ -143,8 +144,8 @@ func TestScheduleJobsBadSchedule(t *testing.T) {
 	t.Setenv("MIDDLEWARE_CRON_SCHEDULE", "")
 	t.Setenv("RETRY_VIDEO_CRON_SCHEDULE", "")
 	db := newTestDB(t)
-	createProvider(t, db, Kiwix, true)
-	createProvider(t, db, Youtube, true)
+	createProvider(t, db, models.Kiwix, true)
+	createProvider(t, db, models.Youtube, true)
 	pub := &published{}
 	s := &fakeScheduler{cron: map[string][]func(){}}
 
@@ -157,17 +158,17 @@ func TestScheduleJobsBadSchedule(t *testing.T) {
 	assert.Equal(t, []string{"tasks.scrape_kiwix", "tasks.retry_video_downloads", "tasks.sync_video_metadata"}, pub.subjects)
 }
 
-func createProvider(t *testing.T, db *gorm.DB, title string, enabled bool) *OpenContentProvider {
+func createProvider(t *testing.T, db *gorm.DB, title string, enabled bool) *models.OpenContentProvider {
 	t.Helper()
-	p := &OpenContentProvider{Title: &title, Url: "https://" + strings.ToLower(title) + ".example", CurrentlyEnabled: enabled}
+	p := &models.OpenContentProvider{Title: &title, Url: "https://" + strings.ToLower(title) + ".example", CurrentlyEnabled: enabled}
 	require.NoError(t, db.Create(p).Error)
 	return p
 }
 
 func TestJobPublisherRun(t *testing.T) {
 	db := newTestDB(t)
-	createProvider(t, db, Youtube, false)
-	kiwix := createProvider(t, db, Kiwix, true)
+	createProvider(t, db, models.Youtube, false)
+	kiwix := createProvider(t, db, models.Kiwix, true)
 	var msgs []*nats.Msg
 	p := &jobPublisher{store: &store{db: db}, publish: func(m *nats.Msg) error {
 		msgs = append(msgs, m)

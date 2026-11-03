@@ -8,6 +8,7 @@ import (
 	"time"
 
 	api "github.com/UnlockedLabs/unlocked-contracts/opencontent"
+	"github.com/UnlockedLabs/unlocked-open-content/internal/models"
 	"gorm.io/gorm"
 )
 
@@ -207,7 +208,7 @@ func kcPctChange(current, prior int64) int {
 }
 
 func (a openContentAPI) kcActivityScope(ctx context.Context, start, end *time.Time, facilityID *uint) *gorm.DB {
-	tx := a.db.WithContext(ctx).Model(&OpenContentActivity{})
+	tx := a.db.WithContext(ctx).Model(&models.OpenContentActivity{})
 	if facilityID != nil {
 		tx = tx.Where("facility_id = ?", *facilityID)
 	}
@@ -378,16 +379,16 @@ func (a openContentAPI) ResetDemoActivity(ctx context.Context, before time.Time)
 
 func (a openContentAPI) SeedDemoActivity(ctx context.Context, facilityID uint, userIDs []uint) error {
 	db := a.db.WithContext(ctx)
-	libraries := []Library{}
-	if err := db.Model(&Library{}).Limit(40).Find(&libraries).Error; err != nil {
+	libraries := []models.Library{}
+	if err := db.Model(&models.Library{}).Limit(40).Find(&libraries).Error; err != nil {
 		return err
 	}
-	contentUrls := []OpenContentUrl{}
-	if err := db.Model(&OpenContentUrl{}).Find(&contentUrls).Error; err != nil {
+	contentUrls := []models.OpenContentUrl{}
+	if err := db.Model(&models.OpenContentUrl{}).Find(&contentUrls).Error; err != nil {
 		return err
 	}
 	if len(contentUrls) == 0 {
-		newContentUrls := []OpenContentUrl{
+		newContentUrls := []models.OpenContentUrl{
 			{ContentURL: "/"}, {ContentURL: "/math"}, {ContentURL: "/science"}, {ContentURL: "/history"},
 		}
 		if err := db.CreateInBatches(&newContentUrls, 4).Error; err != nil {
@@ -400,7 +401,7 @@ func (a openContentAPI) SeedDemoActivity(ctx context.Context, facilityID uint, u
 		for i := 0; i < 180; i++ {
 			for _, library := range libraries {
 				if i%(rand.Intn(8)+1) == 0 {
-					openContentActivity := OpenContentActivity{
+					openContentActivity := models.OpenContentActivity{
 						UserID:                userID,
 						RequestTS:             sixMonthsAgo.AddDate(0, 0, i).Add(time.Duration(i) * time.Minute),
 						ContentID:             library.ID,

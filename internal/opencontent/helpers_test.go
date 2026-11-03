@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/UnlockedLabs/unlocked-open-content/internal/models"
 	"github.com/glebarez/sqlite"
 	"github.com/nats-io/nats.go"
 	"gorm.io/gorm"
@@ -99,17 +100,17 @@ func image(n int) []byte {
 // testModels is Open Content's tables, for the SQLite test databases.
 func testModels() []any {
 	return []any{
-		&HelpfulLink{},
-		&OpenContentProvider{},
-		&OpenContentUrl{},
-		&OpenContentActivity{},
-		&Library{},
-		&FacilityVisibilityStatus{},
-		&Video{},
-		&VideoDownloadAttempt{},
-		&OpenContentFavorite{},
-		&Tag{},
-		&OpenContentTag{},
+		&models.HelpfulLink{},
+		&models.OpenContentProvider{},
+		&models.OpenContentUrl{},
+		&models.OpenContentActivity{},
+		&models.Library{},
+		&models.FacilityVisibilityStatus{},
+		&models.Video{},
+		&models.VideoDownloadAttempt{},
+		&models.OpenContentFavorite{},
+		&models.Tag{},
+		&models.OpenContentTag{},
 	}
 }
 

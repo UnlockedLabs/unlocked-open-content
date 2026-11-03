@@ -6,6 +6,7 @@ import (
 	"time"
 
 	api "github.com/UnlockedLabs/unlocked-contracts/opencontent"
+	"github.com/UnlockedLabs/unlocked-open-content/internal/models"
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -40,7 +41,7 @@ func TestCreateContentActivityAndNotifyWS(t *testing.T) {
 
 	page := "/api/proxy/libraries/1/A/Lesson_1"
 	visit := func(url string) int64 {
-		activity := OpenContentActivity{OpenContentProviderID: 1, FacilityID: 2, UserID: 7, ContentID: 1, RequestTS: time.Now()}
+		activity := models.OpenContentActivity{OpenContentProviderID: 1, FacilityID: 2, UserID: 7, ContentID: 1, RequestTS: time.Now()}
 		srv.createContentActivityAndNotifyWS(url, &activity)
 		require.NotZero(t, activity.ID)
 		return activity.ID
@@ -56,9 +57,9 @@ func TestCreateContentActivityAndNotifyWS(t *testing.T) {
 	})
 
 	t.Run("library page, bookmarked", func(t *testing.T) {
-		var url OpenContentUrl
+		var url models.OpenContentUrl
 		require.NoError(t, db.First(&url, "content_url = ?", page).Error)
-		require.NoError(t, db.Create(&OpenContentFavorite{UserID: 7, ContentID: 1, OpenContentProviderID: 1, OpenContentUrlID: &url.ID}).Error)
+		require.NoError(t, db.Create(&models.OpenContentFavorite{UserID: 7, ContentID: 1, OpenContentProviderID: 1, OpenContentUrlID: &url.ID}).Error)
 
 		notify.sent = nil
 		id := visit(page)

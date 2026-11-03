@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	api "github.com/UnlockedLabs/unlocked-contracts/opencontent"
+	"github.com/UnlockedLabs/unlocked-open-content/internal/models"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/sesv2"
@@ -37,7 +38,7 @@ type server struct {
 
 // Facility visibility
 
-func (srv *server) setHelpfulLinkVisibility(args *queryContext, id int, facilityIDs []uint, visible bool) error {
+func (srv *server) setHelpfulLinkVisibility(args *models.QueryContext, id int, facilityIDs []uint, visible bool) error {
 	link, err := srv.store.GetLinkFromId(uint(id))
 	if err != nil {
 		return err
@@ -46,7 +47,7 @@ func (srv *server) setHelpfulLinkVisibility(args *queryContext, id int, facility
 	return srv.store.UpsertFacilityVisibilityStatuses(args, statuses, visible)
 }
 
-func (srv *server) setVideoVisibility(args *queryContext, id int, facilityIDs []uint, visible bool) error {
+func (srv *server) setVideoVisibility(args *models.QueryContext, id int, facilityIDs []uint, visible bool) error {
 	video, err := srv.store.GetVideoByID(id, args.FacilityID)
 	if err != nil {
 		return err
@@ -55,7 +56,7 @@ func (srv *server) setVideoVisibility(args *queryContext, id int, facilityIDs []
 	return srv.store.UpsertFacilityVisibilityStatuses(args, statuses, visible)
 }
 
-func (srv *server) setLibraryVisibility(args *queryContext, id int, facilityIDs []uint, visible bool) (*Library, error) {
+func (srv *server) setLibraryVisibility(args *models.QueryContext, id int, facilityIDs []uint, visible bool) (*models.Library, error) {
 	library, err := srv.store.GetLibraryByID(id)
 	if err != nil {
 		return nil, err
@@ -69,15 +70,15 @@ func (srv *server) setLibraryVisibility(args *queryContext, id int, facilityIDs 
 }
 
 // buildVisibilityStatuses is one status for each facility, without duplicates.
-func buildVisibilityStatuses(contentID, providerID uint, facilityIDs []uint, visible bool) []FacilityVisibilityStatus {
-	statuses := make([]FacilityVisibilityStatus, 0, len(facilityIDs))
+func buildVisibilityStatuses(contentID, providerID uint, facilityIDs []uint, visible bool) []models.FacilityVisibilityStatus {
+	statuses := make([]models.FacilityVisibilityStatus, 0, len(facilityIDs))
 	seen := make(map[uint]bool, len(facilityIDs))
 	for _, facilityID := range facilityIDs {
 		if seen[facilityID] {
 			continue
 		}
 		seen[facilityID] = true
-		statuses = append(statuses, FacilityVisibilityStatus{
+		statuses = append(statuses, models.FacilityVisibilityStatus{
 			FacilityID:            facilityID,
 			OpenContentProviderID: providerID,
 			ContentID:             contentID,
@@ -116,7 +117,7 @@ func (n natsNotifier) Notify(msg api.Notification) {
 // createContentActivityAndNotifyWS records a visit and tells the user's open
 // tab: the activity, so the tab can end it, and for a library page whether
 // it is bookmarked.
-func (srv *server) createContentActivityAndNotifyWS(urlString string, activity *OpenContentActivity) {
+func (srv *server) createContentActivityAndNotifyWS(urlString string, activity *models.OpenContentActivity) {
 	srv.store.CreateContentActivity(urlString, activity)
 	if activity.ID > 0 {
 		srv.notify.Notify(api.Notification{UserID: activity.UserID, Event: visitEvent, ActivityID: activity.ID})

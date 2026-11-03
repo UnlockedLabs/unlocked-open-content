@@ -7,6 +7,7 @@ import (
 
 	"github.com/UnlockedLabs/unlocked-contracts/jobs"
 
+	"github.com/UnlockedLabs/unlocked-open-content/internal/models"
 	"github.com/nats-io/nats.go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -32,7 +33,7 @@ func TestWorkerScrapeLibraries(t *testing.T) {
 	db := newTestDB(t)
 	newFakeCore(t)
 	kiwix := newFakeKiwix(t, kiwixFeed)
-	provider := createProvider(t, db, Kiwix, true)
+	provider := createProvider(t, db, models.Kiwix, true)
 	require.NoError(t, db.Model(provider).Update("url", kiwix.URL).Error)
 
 	msg, err := scheduledJobMsg(jobs.ScrapeKiwix, provider.ID)
@@ -41,7 +42,7 @@ func TestWorkerScrapeLibraries(t *testing.T) {
 	w.scrapeLibraries(context.Background(), msg)
 
 	var titles []string
-	require.NoError(t, db.Model(&Library{}).Order("title").Pluck("title", &titles).Error)
+	require.NoError(t, db.Model(&models.Library{}).Order("title").Pluck("title", &titles).Error)
 	assert.Equal(t, []string{"Gutenberg", "Tiny", "Wikipedia"}, titles)
 }
 
@@ -53,7 +54,7 @@ func TestWorkerVideoRoutes(t *testing.T) {
 	thumbs := newFakeThumbnails(t)
 	yt := installYtDlp(t, thumbs.URL+"/thumb.jpg")
 	t.Setenv("S3_BUCKET_NAME", "")
-	provider := createProvider(t, db, Youtube, true)
+	provider := createProvider(t, db, models.Youtube, true)
 	w := &worker{store: &store{db: db}}
 
 	add, err := addVideosMsg([]string{url}, provider)
@@ -61,9 +62,9 @@ func TestWorkerVideoRoutes(t *testing.T) {
 	yt.failDownloads()
 	w.addVideos(context.Background(), add)
 
-	var v Video
+	var v models.Video
 	require.NoError(t, db.First(&v, "external_id = ?", "vid123").Error)
-	assert.Equal(t, VideoHasError, v.Availability)
+	assert.Equal(t, models.VideoHasError, v.Availability)
 
 	retry, err := retryManualDownloadMsg(&v)
 	require.NoError(t, err)
@@ -71,7 +72,7 @@ func TestWorkerVideoRoutes(t *testing.T) {
 	w.retryManualDownload(context.Background(), retry)
 
 	require.NoError(t, db.First(&v, v.ID).Error)
-	assert.Equal(t, VideoAvailable, v.Availability)
+	assert.Equal(t, models.VideoAvailable, v.Availability)
 	assert.Equal(t, []string{infoCall, downloadCall(url), infoCall, downloadCall(url)}, yt.calls())
 }
 
@@ -94,7 +95,7 @@ func TestWorkerBadMessages(t *testing.T) {
 			tt.run(&worker{store: &store{db: db}}, context.Background(), &nats.Msg{Data: []byte(tt.data)})
 			assert.Empty(t, yt.calls())
 			var n int64
-			require.NoError(t, db.Model(&Video{}).Count(&n).Error)
+			require.NoError(t, db.Model(&models.Video{}).Count(&n).Error)
 			assert.Zero(t, n)
 		})
 	}

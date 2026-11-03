@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/UnlockedLabs/unlocked-contracts/features"
+	"github.com/UnlockedLabs/unlocked-open-content/internal/models"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/nats-io/nats.go"
@@ -75,7 +76,7 @@ func (srv *server) libraryProxyMiddleware(next http.Handler) http.Handler {
 		}
 		urlString := r.URL.String()
 		if !resourceRegExpression.MatchString(urlString) && !strings.Contains(urlString, "iframe") {
-			activity := OpenContentActivity{
+			activity := models.OpenContentActivity{
 				OpenContentProviderID: proxyParams.OpenContentProviderID,
 				FacilityID:            user.FacilityID,
 				UserID:                user.UserID,
@@ -93,7 +94,7 @@ func (srv *server) libraryProxyMiddleware(next http.Handler) http.Handler {
 // libraryProxyParams is the library's proxy target at facilityID, from the
 // library_paths cache when it is there, and otherwise from the database, then
 // cached.
-func (srv *server) libraryProxyParams(resourceID string, facilityID uint) (*LibraryProxyPO, bool) {
+func (srv *server) libraryProxyParams(resourceID string, facilityID uint) (*models.LibraryProxyPO, bool) {
 	key := libraryCacheKey(resourceID, facilityID)
 	if proxyParams, ok := srv.cachedLibraryProxy(key); ok {
 		return proxyParams, true
@@ -115,7 +116,7 @@ func libraryCacheKey(libraryID string, facilityID uint) string {
 
 // cachedLibraryProxy reads the library_paths cache. There is no cache
 // without NATS, as in tests.
-func (srv *server) cachedLibraryProxy(key string) (*LibraryProxyPO, bool) {
+func (srv *server) cachedLibraryProxy(key string) (*models.LibraryProxyPO, bool) {
 	if srv.libraryPaths == nil {
 		return nil, false
 	}
@@ -123,7 +124,7 @@ func (srv *server) cachedLibraryProxy(key string) (*LibraryProxyPO, bool) {
 	if err != nil {
 		return nil, false
 	}
-	var proxyParams *LibraryProxyPO
+	var proxyParams *models.LibraryProxyPO
 	if err := json.Unmarshal(entry.Value(), &proxyParams); err != nil {
 		logrus.Warnf("issue unmarshaling LibraryProxyPO from nats bucket, error is: %v", err)
 		return nil, false
@@ -134,7 +135,7 @@ func (srv *server) cachedLibraryProxy(key string) (*LibraryProxyPO, bool) {
 // cacheLibraryProxy caches what the proxy read from the database, unless the
 // key was written meanwhile: an admin's change, written by
 // cacheLibraryVisibility, is newer than this read.
-func (srv *server) cacheLibraryProxy(key string, proxyParams *LibraryProxyPO) {
+func (srv *server) cacheLibraryProxy(key string, proxyParams *models.LibraryProxyPO) {
 	if srv.libraryPaths == nil {
 		return
 	}
@@ -150,7 +151,7 @@ func (srv *server) cacheLibraryProxy(key string, proxyParams *LibraryProxyPO) {
 
 // cacheLibraryVisibility caches library's new visibility at each facility in
 // facilityIDs, after an admin changed it there.
-func (srv *server) cacheLibraryVisibility(library *Library, facilityIDs []uint, log sLog) {
+func (srv *server) cacheLibraryVisibility(library *models.Library, facilityIDs []uint, log sLog) {
 	if srv.libraryPaths == nil {
 		return
 	}
@@ -168,7 +169,7 @@ func (srv *server) cacheLibraryVisibility(library *Library, facilityIDs []uint, 
 }
 
 func (srv *server) handleForwardKiwixProxy(w http.ResponseWriter, r *http.Request) {
-	library, ok := r.Context().Value(libraryKey).(*LibraryProxyPO)
+	library, ok := r.Context().Value(libraryKey).(*models.LibraryProxyPO)
 	if !ok {
 		errorResponse(w, http.StatusNotFound, "Library context not found")
 		return
@@ -246,12 +247,12 @@ func (srv *server) handleForwardKiwixProxy(w http.ResponseWriter, r *http.Reques
 	proxy.ServeHTTP(w, r)
 }
 
-func (srv *server) handleRedirectVideosLocal(w http.ResponseWriter, r *http.Request, video *Video) {
+func (srv *server) handleRedirectVideosLocal(w http.ResponseWriter, r *http.Request, video *models.Video) {
 	http.Redirect(w, r, fmt.Sprintf("/videos/%s.mp4", video.ExternalID), http.StatusTemporaryRedirect)
 }
 
 func (srv *server) handleRedirectVideosS3(w http.ResponseWriter, r *http.Request) {
-	video := r.Context().Value(videoKey).(*Video)
+	video := r.Context().Value(videoKey).(*models.Video)
 	if srv.dev || video == nil || srv.s3Bucket == "" {
 		srv.handleRedirectVideosLocal(w, r, video)
 		return

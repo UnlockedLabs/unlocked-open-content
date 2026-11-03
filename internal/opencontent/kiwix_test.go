@@ -2,6 +2,7 @@ package opencontent
 
 import (
 	"context"
+	"github.com/UnlockedLabs/unlocked-open-content/internal/models"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -61,14 +62,14 @@ func newFakeKiwix(t *testing.T, feed string) *httptest.Server {
 	return srv
 }
 
-func kiwixProvider(id uint, url string) *OpenContentProvider {
-	p := &OpenContentProvider{Url: url}
+func kiwixProvider(id uint, url string) *models.OpenContentProvider {
+	p := &models.OpenContentProvider{Url: url}
 	p.ID = id
 	return p
 }
 
-func library(providerID uint, externalID, title string) *Library {
-	return &Library{
+func library(providerID uint, externalID, title string) *models.Library {
+	return &models.Library{
 		OpenContentProviderID: providerID,
 		ExternalID:            &externalID,
 		Title:                 title,
@@ -84,7 +85,7 @@ func TestImportLibraries(t *testing.T) {
 	existing := library(1, "urn:uuid:a", "Old title")
 	gone := library(1, "urn:uuid:gone", "Removed from Kiwix")
 	otherProvider := library(2, "urn:uuid:other", "Another provider's")
-	for _, lib := range []*Library{existing, gone, otherProvider} {
+	for _, lib := range []*models.Library{existing, gone, otherProvider} {
 		if err := db.Create(lib).Error; err != nil {
 			t.Fatal(err)
 		}
@@ -95,7 +96,7 @@ func TestImportLibraries(t *testing.T) {
 		t.Fatalf("ImportLibraries: %v", err)
 	}
 
-	var libs []Library
+	var libs []models.Library
 	if err := db.Order("id").Find(&libs).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -128,7 +129,7 @@ func TestImportLibraries(t *testing.T) {
 	}
 
 	// The library Kiwix no longer lists is soft-deleted.
-	var deleted Library
+	var deleted models.Library
 	if err := db.Unscoped().First(&deleted, gone.ID).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -175,7 +176,7 @@ func TestImportLibrariesFailure(t *testing.T) {
 				t.Fatal("ImportLibraries succeeded, want an error")
 			}
 			var n int64
-			if err := db.Model(&Library{}).Count(&n).Error; err != nil {
+			if err := db.Model(&models.Library{}).Count(&n).Error; err != nil {
 				t.Fatal(err)
 			}
 			if n != 1 {
@@ -200,7 +201,7 @@ func TestImportLibrariesEmptyCatalog(t *testing.T) {
 		t.Fatalf("ImportLibraries: %v", err)
 	}
 	var n int64
-	if err := db.Model(&Library{}).Count(&n).Error; err != nil {
+	if err := db.Model(&models.Library{}).Count(&n).Error; err != nil {
 		t.Fatal(err)
 	}
 	if n != 1 {

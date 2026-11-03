@@ -15,6 +15,7 @@ import (
 	"strings"
 
 	"github.com/UnlockedLabs/unlocked-contracts/features"
+	"github.com/UnlockedLabs/unlocked-open-content/internal/models"
 	"github.com/sirupsen/logrus"
 )
 
@@ -157,11 +158,11 @@ func (srv *server) handleSearchOpenContent(w http.ResponseWriter, r *http.Reques
 	search := r.URL.Query().Get("search")
 	log.add("search", search)
 	log.info("Executing open content search")
-	titleSearch := make([]OpenContentItem, 0, 1)
+	titleSearch := make([]models.OpenContentItem, 0, 1)
 	var (
 		err            error
-		paginationData paginationMeta
-		libraries      []Library
+		paginationData models.PaginationMeta
+		libraries      []models.Library
 	)
 	ids := r.URL.Query()["library_id"]
 	libraryIDs := make([]int, 0, len(ids))
@@ -180,9 +181,9 @@ func (srv *server) handleSearchOpenContent(w http.ResponseWriter, r *http.Reques
 		}
 	}
 	if len(titleSearch) >= perPage {
-		rss := RSS{}
-		paginationData := newPaginationInfo(page, perPage, int64(len(titleSearch)))
-		channels := make([]*OpenContentSearchResult, 0, 1)
+		rss := models.RSS{}
+		paginationData := models.NewPaginationInfo(page, perPage, int64(len(titleSearch)))
+		channels := make([]*models.OpenContentSearchResult, 0, 1)
 		index := (page * perPage) - (perPage - 1)
 		channels = append(channels, rss.SerializeSearchMeta(index, perPage, len(titleSearch), search))
 		channels[0].AppendTitleSearchResults(titleSearch)
@@ -197,7 +198,7 @@ func (srv *server) handleSearchOpenContent(w http.ResponseWriter, r *http.Reques
 		log.add("library_ids", libraryIDs)
 		return newDatabaseServiceError(err)
 	}
-	channels := make([]*OpenContentSearchResult, 0, 1) //only ever going to be one
+	channels := make([]*models.OpenContentSearchResult, 0, 1) //only ever going to be one
 	if len(libraries) > 0 {
 		nextPage := (page-1)*perPage + 1
 		queryParams := url.Values{}
@@ -206,7 +207,7 @@ func (srv *server) handleSearchOpenContent(w http.ResponseWriter, r *http.Reques
 		}
 		queryParams.Add("format", "xml")
 		queryParams.Add("pattern", search)
-		kiwixSearchURL := fmt.Sprintf("%s/search?start=%d&pageLength=%d&%s", KiwixLibraryUrl, nextPage, perPage, queryParams.Encode())
+		kiwixSearchURL := fmt.Sprintf("%s/search?start=%d&pageLength=%d&%s", models.KiwixLibraryUrl, nextPage, perPage, queryParams.Encode())
 		request, err := http.NewRequest(http.MethodGet, kiwixSearchURL, nil)
 		log.add("kiwix_search_url", kiwixSearchURL)
 		if err != nil {
@@ -234,7 +235,7 @@ func (srv *server) handleSearchOpenContent(w http.ResponseWriter, r *http.Reques
 		if err != nil {
 			return newInternalServerServiceError(err, "error reading body of response")
 		}
-		var rss RSS
+		var rss models.RSS
 		err = xml.Unmarshal(body, &rss)
 		if err != nil {
 			return newInternalServerServiceError(err, "error parsing response body into XML")
@@ -243,20 +244,20 @@ func (srv *server) handleSearchOpenContent(w http.ResponseWriter, r *http.Reques
 		if err != nil {
 			return newInternalServerServiceError(err, "error parsing the total results value into an int64")
 		}
-		paginationData = newPaginationInfo(page, perPage, int64(total+int64(len(titleSearch))))
+		paginationData = models.NewPaginationInfo(page, perPage, int64(total+int64(len(titleSearch))))
 		channels = append(channels, rss.SerializeSearchResults(libraries))
 	} else {
-		paginationData = newPaginationInfo(page, perPage, int64(len(titleSearch)))
+		paginationData = models.NewPaginationInfo(page, perPage, int64(len(titleSearch)))
 	}
 	if page == 1 {
 		if len(channels) > 0 { //if channels exist then append
 			channels[0].AppendTitleSearchResults(titleSearch)
 		} else if len(titleSearch) > 0 { //custom build titleSearch
-			rss := RSS{}
+			rss := models.RSS{}
 			channels = append(channels, rss.SerializeSearchMeta(1, perPage, len(titleSearch), search))
 			channels[0].AppendTitleSearchResults(titleSearch)
 		} else { //custom build no results
-			rss := RSS{}
+			rss := models.RSS{}
 			channels = append(channels, rss.SerializeSearchMeta(1, perPage, 0, search))
 		}
 		slices.Reverse(channels[0].Items)
@@ -395,7 +396,7 @@ func (srv *server) handleBookmarkOpenContent(w http.ResponseWriter, r *http.Requ
 	if err != nil {
 		return newInvalidIdServiceError(err, "Content ID")
 	}
-	contentParams := OpenContentParams{
+	contentParams := models.OpenContentParams{
 		UserID:                claimsFrom(r).UserID,
 		ContentID:             uint(contentID),
 		Name:                  requestBody.Name,
@@ -485,29 +486,6 @@ func (srv *server) handleGetTopFacilityLibraries(w http.ResponseWriter, r *http.
 
 // Videos
 
-var errInvalidVideoURL = errors.New("invalid video URL")
-
-func validateVideoURL(urlStr string) error {
-	u, err := url.Parse(urlStr)
-	if err != nil {
-		return fmt.Errorf("%w: %v", errInvalidVideoURL, err)
-	}
-	if u.Scheme != "http" && u.Scheme != "https" {
-		return fmt.Errorf("%w: scheme must be http or https", errInvalidVideoURL)
-	}
-	if u.Host == "" {
-		return fmt.Errorf("%w: missing host", errInvalidVideoURL)
-	}
-	if strings.ContainsAny(urlStr, ";<>|&$`\\\"'") {
-		return fmt.Errorf("%w: contains invalid characters", errInvalidVideoURL)
-	}
-	lowerURL := strings.ToLower(urlStr)
-	if strings.ContainsAny(urlStr, "\n\r") || strings.Contains(lowerURL, "%0a") || strings.Contains(lowerURL, "%0d") {
-		return fmt.Errorf("%w: contains newline characters", errInvalidVideoURL)
-	}
-	return nil
-}
-
 func (srv *server) handleGetVideos(w http.ResponseWriter, r *http.Request, log sLog) error {
 	user := claimsFrom(r)
 	visibility := r.URL.Query().Get("visibility")
@@ -533,11 +511,11 @@ func (srv *server) handleGetVideoById(w http.ResponseWriter, r *http.Request, lo
 	if err != nil {
 		return newInternalServerServiceError(err, "error fetching video")
 	}
-	if !user.IsAdmin() && !video.VisibilityStatus || video.Availability != VideoAvailable {
+	if !user.IsAdmin() && !video.VisibilityStatus || video.Availability != models.VideoAvailable {
 		return newForbiddenServiceError(errors.New("video not visible"), "you are not authorized to view this content")
 	}
 	videoViewerUrl := fmt.Sprintf("/viewer/videos/%d", video.ID)
-	activity := OpenContentActivity{
+	activity := models.OpenContentActivity{
 		OpenContentProviderID: video.OpenContentProviderID,
 		FacilityID:            user.FacilityID,
 		UserID:                user.UserID,
@@ -591,7 +569,7 @@ func (srv *server) handleVideoAction(w http.ResponseWriter, r *http.Request, log
 
 	case RetryVideoAction:
 		log.auditDetails("retry_video_download")
-		if len(video.Attempts) >= MAX_DOWNLOAD_ATTEMPTS {
+		if len(video.Attempts) >= models.MAX_DOWNLOAD_ATTEMPTS {
 			return newBadRequestServiceError(errors.New("max attempts reached"), "max download attempts reached, please remove video and try again")
 		}
 		msg, err := retryManualDownloadMsg(video)
@@ -651,7 +629,7 @@ func (srv *server) handlePostVideos(w http.ResponseWriter, r *http.Request, log 
 		return newBadRequestServiceError(errors.New("no video URLs provided"), "video_urls is required")
 	}
 	for _, videoURL := range video.VideoUrls {
-		if err := validateVideoURL(videoURL); err != nil {
+		if err := models.ValidateVideoURL(videoURL); err != nil {
 			return newBadRequestServiceError(err, "invalid video URL")
 		}
 	}
@@ -735,22 +713,22 @@ func (srv *server) handleGetHelpfulLinks(w http.ResponseWriter, r *http.Request,
 		return newInternalServerServiceError(err, "error fetching helpful links")
 	}
 	respSort := struct {
-		SortOrder string            `json:"sort_order"`
-		Links     []HelpfulLinkResp `json:"helpful_links"`
-		Meta      paginationMeta    `json:"meta"`
+		SortOrder string                   `json:"sort_order"`
+		Links     []models.HelpfulLinkResp `json:"helpful_links"`
+		Meta      models.PaginationMeta    `json:"meta"`
 	}{SortOrder: helpfulSortOrder[claimsFrom(r).FacilityID], Links: links, Meta: args.IntoMeta()}
 	return writeJsonResponse(w, http.StatusOK, respSort)
 }
 
 func (srv *server) handleAddHelpfulLink(w http.ResponseWriter, r *http.Request, log sLog) error {
-	var link HelpfulLink
+	var link models.HelpfulLink
 	err := json.NewDecoder(r.Body).Decode(&link)
 	if err != nil {
 		return newJSONReqBodyServiceError(err)
 	}
 	args := facilityScopedQueryContext(r)
-	link.ThumbnailUrl = nilIfBlank(getFavicon(link.Url))
-	log.infof("Adding helpful link icon %s", formatNullableString(link.ThumbnailUrl))
+	link.ThumbnailUrl = models.NilIfBlank(getFavicon(link.Url))
+	log.infof("Adding helpful link icon %s", models.FormatNullableString(link.ThumbnailUrl))
 	if err := srv.store.AddHelpfulLink(r.Context(), &args, &link); err != nil {
 		return newDatabaseServiceError(err)
 	}
@@ -758,7 +736,7 @@ func (srv *server) handleAddHelpfulLink(w http.ResponseWriter, r *http.Request, 
 }
 
 func (srv *server) handleEditLink(w http.ResponseWriter, r *http.Request, log sLog) error {
-	var link HelpfulLink
+	var link models.HelpfulLink
 	err := json.NewDecoder(r.Body).Decode(&link)
 	if err != nil {
 		return newJSONReqBodyServiceError(err)
@@ -767,7 +745,7 @@ func (srv *server) handleEditLink(w http.ResponseWriter, r *http.Request, log sL
 	if err != nil {
 		return newInvalidIdServiceError(err, "Invalid id")
 	}
-	link.ThumbnailUrl = nilIfBlank(getFavicon(link.Url))
+	link.ThumbnailUrl = models.NilIfBlank(getFavicon(link.Url))
 	if err = srv.store.EditLink(r.Context(), uint(id), link); err != nil {
 		return newDatabaseServiceError(err)
 	}
@@ -833,7 +811,7 @@ func (srv *server) handleDeleteLink(w http.ResponseWriter, r *http.Request, log 
 }
 
 func (srv *server) handleAddUserActivity(w http.ResponseWriter, r *http.Request, log sLog) error {
-	var activity OpenContentActivity
+	var activity models.OpenContentActivity
 	claims := claimsFrom(r)
 	linkID, err := strconv.Atoi(r.PathValue("id"))
 	if err != nil {

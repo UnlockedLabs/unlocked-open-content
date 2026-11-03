@@ -8,6 +8,7 @@ import (
 
 	"github.com/UnlockedLabs/unlocked-contracts/jobs"
 
+	"github.com/UnlockedLabs/unlocked-open-content/internal/models"
 	"github.com/nats-io/nats.go"
 	log "github.com/sirupsen/logrus"
 )
@@ -130,7 +131,7 @@ func (w *worker) syncVideoMetadata(ctx context.Context, msg *nats.Msg) {
 
 // provider decodes a job message and looks up the content provider it names.
 // A provider ID with no row gives an empty provider, not an error.
-func (w *worker) provider(ctx context.Context, msg *nats.Msg) (*OpenContentProvider, map[string]any, error) {
+func (w *worker) provider(ctx context.Context, msg *nats.Msg) (*models.OpenContentProvider, map[string]any, error) {
 	var body map[string]any
 	if err := json.Unmarshal(msg.Data, &body); err != nil {
 		return nil, nil, fmt.Errorf("failed to unmarshal message: %w", err)

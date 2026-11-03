@@ -11,6 +11,7 @@ import (
 	"github.com/UnlockedLabs/unlocked-contracts/features"
 	"github.com/UnlockedLabs/unlocked-contracts/identity"
 	"github.com/UnlockedLabs/unlocked-contracts/users"
+	"github.com/UnlockedLabs/unlocked-open-content/internal/models"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
@@ -182,7 +183,7 @@ func TestLibraryProxyCache(t *testing.T) {
 	})
 
 	t.Run("a read from before an admin's change", func(t *testing.T) {
-		srv.cacheLibraryProxy(libraryCacheKey(id, facilityA), &LibraryProxyPO{ID: uint(libraryID), VisibilityStatus: true})
+		srv.cacheLibraryProxy(libraryCacheKey(id, facilityA), &models.LibraryProxyPO{ID: uint(libraryID), VisibilityStatus: true})
 		require.False(t, visible(t, facilityA))
 	})
 }

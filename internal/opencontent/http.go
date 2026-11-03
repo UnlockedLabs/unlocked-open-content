@@ -1,20 +1,16 @@
 package opencontent
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math"
 	"net/http"
-	"net/url"
-	"slices"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/UnlockedLabs/unlocked-contracts/features"
 	"github.com/UnlockedLabs/unlocked-contracts/identity"
+	"github.com/UnlockedLabs/unlocked-open-content/internal/models"
 	"github.com/sirupsen/logrus"
 	"gorm.io/gorm"
 )
@@ -29,32 +25,12 @@ type resource[T any] struct {
 }
 
 type paginatedResource[T any] struct {
-	Message string         `json:"message"`
-	Data    []T            `json:"data"`
-	Meta    paginationMeta `json:"meta,omitempty"`
+	Message string                `json:"message"`
+	Data    []T                   `json:"data"`
+	Meta    models.PaginationMeta `json:"meta,omitempty"`
 }
 
-type paginationMeta struct {
-	CurrentPage int   `json:"current_page"`
-	LastPage    int   `json:"last_page"`
-	PerPage     int   `json:"per_page"`
-	Total       int64 `json:"total"`
-}
-
-func newPaginationInfo(currentPage, perPage int, total int64) paginationMeta {
-	lastPage := int(total) / perPage
-	if int(total)%perPage > 0 {
-		lastPage++
-	}
-	return paginationMeta{
-		CurrentPage: currentPage,
-		LastPage:    lastPage,
-		PerPage:     perPage,
-		Total:       total,
-	}
-}
-
-func writePaginatedResponse[T any](w http.ResponseWriter, status int, data []T, meta paginationMeta) error {
+func writePaginatedResponse[T any](w http.ResponseWriter, status int, data []T, meta models.PaginationMeta) error {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	resp := paginatedResource[T]{Message: "", Data: data, Meta: meta}
@@ -300,57 +276,11 @@ func userIsAdmin(r *http.Request) bool {
 	return claimsFrom(r).IsAdmin()
 }
 
-// queryContext is a list request's paging, filters and caller.
-type queryContext struct {
-	Params        url.Values
-	Page          int
-	PerPage       int
-	FacilityID    uint
-	UserID        uint
-	OrderBy       string
-	Order         string
-	IsAdmin       bool
-	Search        string
-	Tags          []string
-	Total         int64
-	All           bool
-	Ctx           context.Context
-	FeatureAccess []features.Access
-}
-
-func (q *queryContext) HasFeature(feature features.Access) bool {
-	return slices.Contains(q.FeatureAccess, feature)
-}
-
-func (q queryContext) IntoMeta() paginationMeta {
-	return newPaginationInfo(q.Page, q.PerPage, q.Total)
-}
-
-func (q queryContext) CalcOffset() int {
-	return int(math.Abs(float64((q.Page - 1) * q.PerPage)))
-}
-
-// OrderClause is the request's order, or fallback when it has none.
-func (q queryContext) OrderClause(fallback string) string {
-	val := q.OrderBy + " " + q.Order
-	if val == " " || q.OrderBy == "" {
-		return fallback
-	}
-	return val
-}
-
-func (q queryContext) SearchQuery() string {
-	if q.Search == "" {
-		return ""
-	}
-	return "%" + q.Search + "%"
-}
-
 // getQueryContext resolves the facility scope for a request: a switch-capable
 // admin (sysadmin/dept admin) gets the ?facility_id they're viewing, or 0
 // (statewide) when none is selected; a facility admin is always pinned to their
 // own facility.
-func getQueryContext(r *http.Request) queryContext {
+func getQueryContext(r *http.Request) models.QueryContext {
 	var facilityID, userID uint
 	claims := claimsFrom(r)
 	f, err := strconv.Atoi(r.URL.Query().Get("facility_id"))
@@ -378,7 +308,7 @@ func getQueryContext(r *http.Request) queryContext {
 			order = orderBySplit[1]
 		}
 	}
-	return queryContext{
+	return models.QueryContext{
 		Params:        r.URL.Query(),
 		Ctx:           r.Context(),
 		Page:          page,
@@ -398,7 +328,7 @@ func getQueryContext(r *http.Request) queryContext {
 // facilityScopedQueryContext is for reads whose results are per facility. A
 // statewide admin has no single facility (FacilityID == 0), so these fall back
 // to the admin's home facility rather than matching no facility at all.
-func facilityScopedQueryContext(r *http.Request) queryContext {
+func facilityScopedQueryContext(r *http.Request) models.QueryContext {
 	args := getQueryContext(r)
 	if args.FacilityID == 0 {
 		args.FacilityID = claimsFrom(r).FacilityID

@@ -16,6 +16,7 @@ import (
 
 	"github.com/UnlockedLabs/unlocked-contracts/identity"
 	api "github.com/UnlockedLabs/unlocked-contracts/opencontent"
+	"github.com/UnlockedLabs/unlocked-open-content/internal/models"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/sesv2"
@@ -277,10 +278,10 @@ func Seed(ctx context.Context, db *gorm.DB) error {
 		// Links are deleted for good, so a site can have none: its providers
 		// also tell it apart from a new database.
 		var links, providers int64
-		if err := tx.Unscoped().Model(&HelpfulLink{}).Count(&links).Error; err != nil {
+		if err := tx.Unscoped().Model(&models.HelpfulLink{}).Count(&links).Error; err != nil {
 			return fmt.Errorf("count helpful links: %w", err)
 		}
-		if err := tx.Unscoped().Model(&OpenContentProvider{}).Where("title IN ?", []string{Kiwix, Youtube}).Count(&providers).Error; err != nil {
+		if err := tx.Unscoped().Model(&models.OpenContentProvider{}).Where("title IN ?", []string{models.Kiwix, models.Youtube}).Count(&providers).Error; err != nil {
 			return fmt.Errorf("count Kiwix and YouTube providers: %w", err)
 		}
 		if links > 0 || providers > 0 {
@@ -312,7 +313,7 @@ func Seed(ctx context.Context, db *gorm.DB) error {
 // seed adds the default helpful links, visible at facilityID, and the Kiwix
 // and YouTube providers.
 func seed(db *gorm.DB, facilityID uint) error {
-	links := []HelpfulLink{}
+	links := []models.HelpfulLink{}
 	if err := json.Unmarshal([]byte(defaultLeftMenuLinks), &links); err != nil {
 		return fmt.Errorf("read default left menu links: %w", err)
 	}
@@ -323,7 +324,7 @@ func seed(db *gorm.DB, facilityID uint) error {
 		if link.OpenContentProviderID == 0 {
 			continue
 		}
-		visibility := FacilityVisibilityStatus{
+		visibility := models.FacilityVisibilityStatus{
 			FacilityID:            facilityID,
 			OpenContentProviderID: link.OpenContentProviderID,
 			ContentID:             link.ID,
@@ -333,9 +334,9 @@ func seed(db *gorm.DB, facilityID uint) error {
 			return fmt.Errorf("create link visibility: %w", err)
 		}
 	}
-	providers := []OpenContentProvider{
-		{Title: stringPtr(Kiwix), Url: KiwixLibraryUrl, CurrentlyEnabled: true, ThumbnailUrl: stringPtr(KiwixThumbnailURL), Description: stringPtr(Kiwix)},
-		{Title: stringPtr(Youtube), Url: YoutubeApi, CurrentlyEnabled: true, ThumbnailUrl: stringPtr(YoutubeThumbnail), Description: stringPtr(YoutubeDescription)},
+	providers := []models.OpenContentProvider{
+		{Title: models.StringPtr(models.Kiwix), Url: models.KiwixLibraryUrl, CurrentlyEnabled: true, ThumbnailUrl: models.StringPtr(models.KiwixThumbnailURL), Description: models.StringPtr(models.Kiwix)},
+		{Title: models.StringPtr(models.Youtube), Url: models.YoutubeApi, CurrentlyEnabled: true, ThumbnailUrl: models.StringPtr(models.YoutubeThumbnail), Description: models.StringPtr(models.YoutubeDescription)},
 	}
 	for i := range providers {
 		if err := db.Create(&providers[i]).Error; err != nil {

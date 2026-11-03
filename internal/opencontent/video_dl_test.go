@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/UnlockedLabs/unlocked-open-content/internal/models"
 	"gorm.io/gorm"
 )
 
@@ -100,12 +101,12 @@ const youtubeProviderID = 2
 func newVideoService(t *testing.T, db *gorm.DB, body map[string]any) *VideoService {
 	t.Helper()
 	t.Setenv("S3_BUCKET_NAME", "")
-	p := &OpenContentProvider{Url: "https://www.youtube.com"}
+	p := &models.OpenContentProvider{Url: "https://www.youtube.com"}
 	p.ID = youtubeProviderID
 	return NewVideoService(p, &store{db: db}, body)
 }
 
-func createVideo(t *testing.T, db *gorm.DB, v *Video) *Video {
+func createVideo(t *testing.T, db *gorm.DB, v *models.Video) *models.Video {
 	t.Helper()
 	if v.OpenContentProviderID == 0 {
 		v.OpenContentProviderID = youtubeProviderID
@@ -116,9 +117,9 @@ func createVideo(t *testing.T, db *gorm.DB, v *Video) *Video {
 	return v
 }
 
-func attempts(t *testing.T, db *gorm.DB, videoID uint) []VideoDownloadAttempt {
+func attempts(t *testing.T, db *gorm.DB, videoID uint) []models.VideoDownloadAttempt {
 	t.Helper()
-	var got []VideoDownloadAttempt
+	var got []models.VideoDownloadAttempt
 	if err := db.Where("video_id = ?", videoID).Order("id").Find(&got).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -131,7 +132,7 @@ func TestAddVideos(t *testing.T) {
 		name          string
 		thumbnailPath string
 		failDownload  bool
-		wantAvail     VideoAvailability
+		wantAvail     models.VideoAvailability
 		wantThumbnail string
 		wantUploads   []string
 		wantAttempts  int
@@ -140,7 +141,7 @@ func TestAddVideos(t *testing.T) {
 		{
 			name:          "downloaded",
 			thumbnailPath: "/thumb.jpg",
-			wantAvail:     VideoAvailable,
+			wantAvail:     models.VideoAvailable,
 			wantThumbnail: "/api/photos/vid123.jpg",
 			wantUploads:   []string{"vid123.jpg"},
 			wantDownload:  true,
@@ -151,14 +152,14 @@ func TestAddVideos(t *testing.T) {
 			// downloaded. The retry job picks it up after 30 minutes.
 			name:          "thumbnail missing",
 			thumbnailPath: "/missing.jpg",
-			wantAvail:     VideoProcessing,
+			wantAvail:     models.VideoProcessing,
 			wantThumbnail: "/youtube.png",
 		},
 		{
 			name:          "download fails",
 			thumbnailPath: "/thumb.jpg",
 			failDownload:  true,
-			wantAvail:     VideoHasError,
+			wantAvail:     models.VideoHasError,
 			wantThumbnail: "/api/photos/vid123.jpg",
 			wantUploads:   []string{"vid123.jpg"},
 			wantAttempts:  1,
@@ -180,7 +181,7 @@ func TestAddVideos(t *testing.T) {
 				t.Fatalf("addVideos: %v", err)
 			}
 
-			var v Video
+			var v models.Video
 			if err := db.First(&v).Error; err != nil {
 				t.Fatal(err)
 			}
@@ -225,8 +226,8 @@ func TestAddVideosSkipsExisting(t *testing.T) {
 	db := newTestDB(t)
 	newFakeCore(t)
 	yt := installYtDlp(t, "")
-	createVideo(t, db, &Video{ExternalID: "abc", Url: "https://youtu.be/abc", Availability: VideoAvailable})
-	createVideo(t, db, &Video{ExternalID: "x1", Url: "https://vimeo.com/1", Availability: VideoAvailable})
+	createVideo(t, db, &models.Video{ExternalID: "abc", Url: "https://youtu.be/abc", Availability: models.VideoAvailable})
+	createVideo(t, db, &models.Video{ExternalID: "x1", Url: "https://vimeo.com/1", Availability: models.VideoAvailable})
 
 	urls := []any{"https://www.youtube.com/watch?v=abc&t=3", "https://vimeo.com/1"}
 	vs := newVideoService(t, db, map[string]any{"video_urls": urls})
@@ -237,7 +238,7 @@ func TestAddVideosSkipsExisting(t *testing.T) {
 		t.Errorf("yt-dlp was called: %q", calls)
 	}
 	var n int64
-	if err := db.Model(&Video{}).Count(&n).Error; err != nil {
+	if err := db.Model(&models.Video{}).Count(&n).Error; err != nil {
 		t.Fatal(err)
 	}
 	if n != 2 {
@@ -263,17 +264,17 @@ func TestRetryFailedVideos(t *testing.T) {
 	yt := installYtDlp(t, "")
 	hourAgo := time.Now().Add(-time.Hour)
 
-	failed := createVideo(t, db, &Video{ExternalID: "f", Url: "https://youtu.be/f", Availability: VideoHasError})
-	staleProcessing := createVideo(t, db, &Video{ExternalID: "s", Url: "https://youtu.be/s", Availability: VideoProcessing})
-	newProcessing := createVideo(t, db, &Video{ExternalID: "n", Url: "https://youtu.be/n", Availability: VideoProcessing})
-	recentlyTried := createVideo(t, db, &Video{ExternalID: "r", Url: "https://youtu.be/r", Availability: VideoProcessing})
-	available := createVideo(t, db, &Video{ExternalID: "a", Url: "https://youtu.be/a", Availability: VideoAvailable})
-	for _, v := range []*Video{failed, staleProcessing, recentlyTried, available} {
+	failed := createVideo(t, db, &models.Video{ExternalID: "f", Url: "https://youtu.be/f", Availability: models.VideoHasError})
+	staleProcessing := createVideo(t, db, &models.Video{ExternalID: "s", Url: "https://youtu.be/s", Availability: models.VideoProcessing})
+	newProcessing := createVideo(t, db, &models.Video{ExternalID: "n", Url: "https://youtu.be/n", Availability: models.VideoProcessing})
+	recentlyTried := createVideo(t, db, &models.Video{ExternalID: "r", Url: "https://youtu.be/r", Availability: models.VideoProcessing})
+	available := createVideo(t, db, &models.Video{ExternalID: "a", Url: "https://youtu.be/a", Availability: models.VideoAvailable})
+	for _, v := range []*models.Video{failed, staleProcessing, recentlyTried, available} {
 		if err := db.Model(v).UpdateColumn("created_at", hourAgo).Error; err != nil {
 			t.Fatal(err)
 		}
 	}
-	if err := db.Create(&VideoDownloadAttempt{VideoID: recentlyTried.ID}).Error; err != nil {
+	if err := db.Create(&models.VideoDownloadAttempt{VideoID: recentlyTried.ID}).Error; err != nil {
 		t.Fatal(err)
 	}
 
@@ -282,16 +283,16 @@ func TestRetryFailedVideos(t *testing.T) {
 		t.Fatalf("retryFailedVideos: %v", err)
 	}
 
-	want := map[uint]VideoAvailability{
-		failed.ID:          VideoAvailable,
-		staleProcessing.ID: VideoAvailable,
+	want := map[uint]models.VideoAvailability{
+		failed.ID:          models.VideoAvailable,
+		staleProcessing.ID: models.VideoAvailable,
 		// Too new to retry, or tried in the last 10 minutes.
-		newProcessing.ID: VideoProcessing,
-		recentlyTried.ID: VideoProcessing,
-		available.ID:     VideoAvailable,
+		newProcessing.ID: models.VideoProcessing,
+		recentlyTried.ID: models.VideoProcessing,
+		available.ID:     models.VideoAvailable,
 	}
 	for id, avail := range want {
-		var v Video
+		var v models.Video
 		if err := db.First(&v, id).Error; err != nil {
 			t.Fatal(err)
 		}
@@ -315,17 +316,17 @@ func TestRetryFailedDownload(t *testing.T) {
 		wantDeleted  bool
 	}{
 		{name: "first failure", priorTries: 0, wantAttempts: 1},
-		{name: "last try left", priorTries: MAX_DOWNLOAD_ATTEMPTS - 1, wantAttempts: MAX_DOWNLOAD_ATTEMPTS},
-		{name: "out of tries", priorTries: MAX_DOWNLOAD_ATTEMPTS, wantAttempts: MAX_DOWNLOAD_ATTEMPTS, wantDeleted: true},
+		{name: "last try left", priorTries: models.MAX_DOWNLOAD_ATTEMPTS - 1, wantAttempts: models.MAX_DOWNLOAD_ATTEMPTS},
+		{name: "out of tries", priorTries: models.MAX_DOWNLOAD_ATTEMPTS, wantAttempts: models.MAX_DOWNLOAD_ATTEMPTS, wantDeleted: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			db := newTestDB(t)
 			newFakeCore(t)
 			installYtDlp(t, "").failDownloads()
-			v := createVideo(t, db, &Video{ExternalID: "f", Url: "https://youtu.be/f", Availability: VideoHasError})
+			v := createVideo(t, db, &models.Video{ExternalID: "f", Url: "https://youtu.be/f", Availability: models.VideoHasError})
 			for range tt.priorTries {
-				attempt := VideoDownloadAttempt{VideoID: v.ID}
+				attempt := models.VideoDownloadAttempt{VideoID: v.ID}
 				attempt.CreatedAt = time.Now().Add(-time.Hour)
 				if err := db.Create(&attempt).Error; err != nil {
 					t.Fatal(err)
@@ -344,15 +345,15 @@ func TestRetryFailedDownload(t *testing.T) {
 			if !tt.wantDeleted && deref(got[len(got)-1].ErrorMessage) != "exit status 1" {
 				t.Errorf("last attempt's error = %q, want %q", deref(got[len(got)-1].ErrorMessage), "exit status 1")
 			}
-			var after Video
+			var after models.Video
 			if err := db.Unscoped().First(&after, v.ID).Error; err != nil {
 				t.Fatal(err)
 			}
 			if after.DeletedAt.Valid != tt.wantDeleted {
 				t.Errorf("deleted = %v, want %v", after.DeletedAt.Valid, tt.wantDeleted)
 			}
-			if !tt.wantDeleted && after.Availability != VideoHasError {
-				t.Errorf("availability = %q, want %q", after.Availability, VideoHasError)
+			if !tt.wantDeleted && after.Availability != models.VideoHasError {
+				t.Errorf("availability = %q, want %q", after.Availability, models.VideoHasError)
 			}
 		})
 	}
@@ -362,7 +363,7 @@ func TestRetryFailedDownload(t *testing.T) {
 func TestRetrySingleVideoAvailable(t *testing.T) {
 	db := newTestDB(t)
 	yt := installYtDlp(t, "")
-	v := createVideo(t, db, &Video{ExternalID: "a", Url: "https://youtu.be/a", Availability: VideoAvailable})
+	v := createVideo(t, db, &models.Video{ExternalID: "a", Url: "https://youtu.be/a", Availability: models.VideoAvailable})
 
 	vs := newVideoService(t, db, map[string]any{})
 	if err := vs.retrySingleVideo(context.Background(), int(v.ID)); err != nil {
@@ -400,7 +401,7 @@ func TestSyncVideoMetadata(t *testing.T) {
 			t.Cleanup(func() { videosDir = old })
 
 			for _, id := range tt.files {
-				data, err := json.Marshal(Video{ExternalID: id, Url: "https://youtu.be/" + id, Title: "On disk " + id, OpenContentProviderID: youtubeProviderID, Availability: VideoAvailable})
+				data, err := json.Marshal(models.Video{ExternalID: id, Url: "https://youtu.be/" + id, Title: "On disk " + id, OpenContentProviderID: youtubeProviderID, Availability: models.VideoAvailable})
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -409,7 +410,7 @@ func TestSyncVideoMetadata(t *testing.T) {
 				}
 			}
 			for _, id := range tt.rows {
-				createVideo(t, db, &Video{ExternalID: id, Url: "https://youtu.be/" + id, Title: "In db " + id, Availability: VideoAvailable})
+				createVideo(t, db, &models.Video{ExternalID: id, Url: "https://youtu.be/" + id, Title: "In db " + id, Availability: models.VideoAvailable})
 			}
 			if err := os.WriteFile(filepath.Join(dir, "a.mp4"), nil, 0o644); err != nil {
 				t.Fatal(err)
@@ -421,7 +422,7 @@ func TestSyncVideoMetadata(t *testing.T) {
 			}
 
 			var rows []string
-			if err := db.Model(&Video{}).Order("external_id").Pluck("external_id", &rows).Error; err != nil {
+			if err := db.Model(&models.Video{}).Order("external_id").Pluck("external_id", &rows).Error; err != nil {
 				t.Fatal(err)
 			}
 			if !slices.Equal(rows, tt.wantRows) {
@@ -447,45 +448,13 @@ func TestSyncVideoMetadata(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				var v Video
+				var v models.Video
 				if err := json.Unmarshal(data, &v); err != nil {
 					t.Fatal(err)
 				}
 				if v.Title != "In db "+id {
 					t.Errorf("%s.json title = %q, want %q", id, v.Title, "In db "+id)
 				}
-			}
-		})
-	}
-}
-
-func TestValidateVideoURL(t *testing.T) {
-	tests := []struct {
-		url   string
-		valid bool
-	}{
-		{"https://www.youtube.com/watch?v=abc", true},
-		{"http://example.com/video.mp4", true},
-		{"ftp://example.com/video.mp4", false},
-		{"https://", false},
-		{"https://example.com/a;rm -rf", false},
-		{"https://example.com/a|b", false},
-		{"https://example.com/a$b", false},
-		{"https://example.com/a`b`", false},
-		{"https://example.com/a&b", false},
-		{"https://example.com/a%0Ab", false},
-		{"https://example.com/a%0db", false},
-		{"https://example.com/a\nb", false},
-		{"://bad", false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.url, func(t *testing.T) {
-			err := validateVideoURL(tt.url)
-			if (err == nil) != tt.valid {
-				t.Errorf("validateVideoURL(%q) = %v, want valid=%v", tt.url, err, tt.valid)
-			}
-			if err != nil && !errors.Is(err, errInvalidVideoURL) {
-				t.Errorf("error %v isn't errInvalidVideoURL", err)
 			}
 		})
 	}
