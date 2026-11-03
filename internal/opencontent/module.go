@@ -261,7 +261,7 @@ func waitAndSeed(ctx context.Context, db *gorm.DB) error {
 }
 
 // Seed gives a new database, one that has never had a helpful link or a
-// Kiwix provider, the default helpful links, visible at core's first
+// Kiwix or YouTube provider, the default helpful links, visible at core's first
 // facility, and the Kiwix and YouTube providers. Until core has created that
 // facility it adds nothing and returns errNoFacility. It adds all or nothing,
 // and on Postgres two Seeds never run at once.
@@ -272,14 +272,16 @@ func Seed(ctx context.Context, db *gorm.DB) error {
 				return fmt.Errorf("lock the seed: %w", err)
 			}
 		}
-		var links, kiwix int64
+		// Links are deleted for good, so a site can have none: its providers
+		// also tell it apart from a new database.
+		var links, providers int64
 		if err := tx.Unscoped().Model(&HelpfulLink{}).Count(&links).Error; err != nil {
 			return fmt.Errorf("count helpful links: %w", err)
 		}
-		if err := tx.Unscoped().Model(&OpenContentProvider{}).Where("title = ?", Kiwix).Count(&kiwix).Error; err != nil {
-			return fmt.Errorf("count Kiwix providers: %w", err)
+		if err := tx.Unscoped().Model(&OpenContentProvider{}).Where("title IN ?", []string{Kiwix, Youtube}).Count(&providers).Error; err != nil {
+			return fmt.Errorf("count Kiwix and YouTube providers: %w", err)
 		}
-		if links > 0 || kiwix > 0 {
+		if links > 0 || providers > 0 {
 			return nil
 		}
 		var facilityID uint

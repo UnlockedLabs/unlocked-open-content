@@ -100,10 +100,12 @@ func TestSeed(t *testing.T) {
 		assert.Equal(t, counts{}, countRows(t, db))
 	})
 
-	t.Run("site with a Kiwix provider", func(t *testing.T) {
-		db := newDB(t, "Default")
-		require.NoError(t, db.Create(&OpenContentProvider{Title: stringPtr(Kiwix), Url: "http://kiwix"}).Error)
-		require.NoError(t, Seed(t.Context(), db))
-		assert.Equal(t, counts{providers: 1}, countRows(t, db))
-	})
+	for _, title := range []string{Kiwix, Youtube} {
+		t.Run("site with no links and a "+title+" provider", func(t *testing.T) {
+			db := newDB(t, "Default")
+			require.NoError(t, db.Create(&OpenContentProvider{Title: stringPtr(title), Url: "http://" + title}).Error)
+			require.NoError(t, Seed(t.Context(), db))
+			assert.Equal(t, counts{providers: 1}, countRows(t, db))
+		})
+	}
 }
