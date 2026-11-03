@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/UnlockedLabs/unlocked-contracts/jobs"
+	"github.com/UnlockedLabs/unlocked-open-content/internal/database"
 	"github.com/UnlockedLabs/unlocked-open-content/internal/models"
 	"github.com/go-co-op/gocron/v2"
 	"github.com/nats-io/nats.go"
@@ -85,7 +86,7 @@ func scheduleJobs(s scheduler, p *jobPublisher, dev bool) {
 
 // jobPublisher publishes a scheduled job for the provider that runs it.
 type jobPublisher struct {
-	store   *store
+	db      *database.DB
 	publish func(*nats.Msg) error
 }
 
@@ -97,7 +98,7 @@ func (p *jobPublisher) run(ctx context.Context, job jobs.Type) {
 	if job.IsLibraryJob() {
 		title = models.Kiwix
 	}
-	providerID, err := p.store.GetEnabledProviderID(ctx, title)
+	providerID, err := p.db.GetEnabledProviderID(ctx, title)
 	if err != nil {
 		log.Errorf("failed to find the provider for %s: %v", job, err)
 		return

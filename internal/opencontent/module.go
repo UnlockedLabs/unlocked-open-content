@@ -4,50 +4,30 @@ package opencontent
 
 import (
 	"context"
-	"database/sql"
-	"embed"
-	"encoding/json"
-	"errors"
 	"fmt"
-	"io/fs"
 	"net/http"
 	"os"
 	"time"
 
-	"github.com/UnlockedLabs/unlocked-contracts/identity"
 	api "github.com/UnlockedLabs/unlocked-contracts/opencontent"
-	"github.com/UnlockedLabs/unlocked-open-content/internal/models"
+	"github.com/UnlockedLabs/unlocked-open-content/internal/database"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/sesv2"
 	"github.com/go-co-op/gocron/v2"
 	"github.com/nats-io/nats.go"
-	"github.com/pressly/goose/v3"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	log "github.com/sirupsen/logrus"
-	"gorm.io/gorm"
 )
-
-// Schema is the Postgres schema that holds Open Content's tables, and the
-// role its connection runs as.
-const Schema = "open_content"
-
-// ledgerTable is the goose version table for Open Content's migrations. It is
-// the one core used while Open Content was its module, so a site that already
-// ran them doesn't run them again.
-const ledgerTable = "public.goose_db_version_opencontent"
-
-//go:embed migrations/*.sql
-var migrations embed.FS
 
 // NewHandler serves Open Content's routes, each behind requireLogin and its
 // access checks, its metrics on /api/metrics for Prometheus, and its answers
 // to core's questions on /internal/v1/open-content/, which the ingress never
 // routes, to callers with token, the site's secret core also has. A failure to
 // reach AWS or NATS is an error.
-func NewHandler(ctx context.Context, db *gorm.DB, nc *nats.Conn, requireLogin func(http.Handler) http.Handler, token string) (http.Handler, error) {
+func NewHandler(ctx context.Context, db *database.DB, nc *nats.Conn, requireLogin func(http.Handler) http.Handler, token string) (http.Handler, error) {
 	srv := &server{
-		store:  &store{db: db},
+		db:     db,
 		notify: natsNotifier{nc},
 		nats:   nc,
 		client: &http.Client{},
@@ -70,15 +50,15 @@ func NewHandler(ctx context.Context, db *gorm.DB, nc *nats.Conn, requireLogin fu
 }
 
 // Work runs the worker until ctx is canceled. It first seeds a new database
-// (waitAndSeed), so the scheduled jobs find the Kiwix and YouTube providers,
+// (WaitAndSeed), so the scheduled jobs find the Kiwix and YouTube providers,
 // then runs Open Content's jobs as they're published, and publishes the
 // scheduled ones on their schedules. Canceling ctx also stops the jobs that
 // are running.
-func Work(ctx context.Context, db *gorm.DB, nc *nats.Conn) error {
-	if err := waitAndSeed(ctx, db); err != nil {
+func Work(ctx context.Context, db *database.DB, nc *nats.Conn) error {
+	if err := db.WaitAndSeed(ctx); err != nil {
 		return err
 	}
-	w := &worker{store: &store{db: db}}
+	w := &worker{db: db}
 	if err := w.subscribe(ctx, nc); err != nil {
 		return err
 	}
@@ -86,7 +66,7 @@ func Work(ctx context.Context, db *gorm.DB, nc *nats.Conn) error {
 	if err != nil {
 		return fmt.Errorf("create scheduler: %w", err)
 	}
-	p := &jobPublisher{store: &store{db: db}, publish: nc.PublishMsg}
+	p := &jobPublisher{db: db, publish: nc.PublishMsg}
 	scheduleJobs(cronScheduler{s}, p, os.Getenv("APP_ENV") == "dev")
 	s.Start()
 	log.Info("Worker started")
@@ -97,92 +77,6 @@ func Work(ctx context.Context, db *gorm.DB, nc *nats.Conn) error {
 	}
 	log.Info("Worker stopped")
 	return nil
-}
-
-// Migrate runs Open Content's migrations on db, which connects as the
-// database's own user, not as the open_content role. Core's migrations must
-// have run first: the first one moves tables core's migrations created.
-func Migrate(ctx context.Context, db *sql.DB) error {
-	p, err := migrationProvider(db)
-	if err != nil {
-		return err
-	}
-	results, err := p.Up(ctx)
-	for _, r := range results {
-		log.Infof("Applied migration %s in %s", r.Source.Path, r.Duration)
-	}
-	if err != nil {
-		return fmt.Errorf("migrate: %w", err)
-	}
-	return nil
-}
-
-// Reset rolls back every Open Content migration on db, which connects as the
-// database's own user, so core's reset can then drop the tables. Run it before
-// core's: the first migration's rollback moves the tables back to public.
-func Reset(ctx context.Context, db *sql.DB) error {
-	p, err := migrationProvider(db)
-	if err != nil {
-		return err
-	}
-	results, err := p.DownTo(ctx, 0)
-	for _, r := range results {
-		log.Infof("Rolled back migration %s in %s", r.Source.Path, r.Duration)
-	}
-	if err != nil {
-		return fmt.Errorf("roll back migrations: %w", err)
-	}
-	return nil
-}
-
-// migrationProvider is goose with Open Content's migrations and ledger.
-func migrationProvider(db *sql.DB) (*goose.Provider, error) {
-	fsys, err := fs.Sub(migrations, "migrations")
-	if err != nil {
-		return nil, fmt.Errorf("read migrations: %w", err)
-	}
-	p, err := goose.NewProvider(goose.DialectPostgres, db, fsys,
-		goose.WithTableName(ledgerTable),
-		goose.WithDisableGlobalRegistry(true),
-	)
-	if err != nil {
-		return nil, fmt.Errorf("load migrations: %w", err)
-	}
-	return p, nil
-}
-
-// migrationPollInterval is how often WaitForMigrations checks, as core's
-// does.
-const migrationPollInterval = 5 * time.Second
-
-// WaitForMigrations waits until db has every migration this image ships, so
-// serve and worker never run against an older schema. It reads the ledger
-// only, and waits out errors, since the ledger doesn't exist until migrate
-// first runs. It returns ctx's error if ctx is canceled first.
-func WaitForMigrations(ctx context.Context, db *sql.DB) error {
-	p, err := migrationProvider(db)
-	if err != nil {
-		return err
-	}
-	sources := p.ListSources()
-	latest := sources[len(sources)-1].Version
-	for {
-		var applied int64
-		err := db.QueryRowContext(ctx, `SELECT COALESCE(MAX(version_id), 0) FROM `+ledgerTable+` WHERE is_applied`).Scan(&applied)
-		switch {
-		case err != nil:
-			log.Warnf("Waiting for migrations: %v", err)
-		case applied < latest:
-			log.Infof("Waiting for migrations: at %d of %d", applied, latest)
-		default:
-			return nil
-		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(migrationPollInterval):
-		}
-	}
 }
 
 // connectAWS sets up email for content requests and, when S3_BUCKET_NAME is
@@ -216,132 +110,4 @@ func libraryPathsBucket(nc *nats.Conn) (nats.KeyValue, error) {
 		return kv, nil
 	}
 	return js.CreateKeyValue(&nats.KeyValueConfig{Bucket: libraryPaths, History: 1, TTL: 24 * time.Hour})
-}
-
-// defaultLeftMenuLinks are the helpful links a new database starts with.
-// Provider 1 is the HelpfulLinks provider that core's migration 00026 creates.
-const defaultLeftMenuLinks = `[{
-			"title": "Unlocked Labs",
-			"description": "Unlocked Labs website",
-			"url": "https://unlockedlabs.org",
-			"visibility_status": true,
-	        "thumbnail_url": "https://unlockedlabs.org/favicon.ico",
-			"open_content_provider_id": 1,
-			"facility_id": 1
-		},
-	    {
-	    "title": "Google",
-	    "description": "Google search engine",
-	    "url": "https://www.google.com",
-	    "visibility_status": true,
-	    "open_content_provider_id": 1,
-	    "thumbnail_url": "https://www.google.com/favicon.ico",
-	    "facility_id": 1
-	    }]`
-
-// errNoFacility is Seed's answer before core has created its first facility.
-var errNoFacility = errors.New("core hasn't created its first facility")
-
-// seedPollInterval is how often waitAndSeed checks for core's first facility.
-const seedPollInterval = 5 * time.Second
-
-// waitAndSeed seeds a new database, first waiting until core has created its
-// first facility, which core does when it first starts. It returns ctx's
-// error if ctx is canceled first.
-func waitAndSeed(ctx context.Context, db *gorm.DB) error {
-	for {
-		err := Seed(ctx, db)
-		if !errors.Is(err, errNoFacility) {
-			return err
-		}
-		log.Info("Waiting for core's first facility to seed the new database")
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(seedPollInterval):
-		}
-	}
-}
-
-// Seed gives a new database, one that has never had a helpful link or a
-// Kiwix or YouTube provider, the default helpful links, visible at core's first
-// facility, and the Kiwix and YouTube providers. Until core has created that
-// facility it adds nothing and returns errNoFacility. It adds all or nothing,
-// and on Postgres two Seeds never run at once.
-func Seed(ctx context.Context, db *gorm.DB) error {
-	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if tx.Name() == "postgres" {
-			if err := tx.Exec("SELECT pg_advisory_xact_lock(hashtext('open_content_seed'))").Error; err != nil {
-				return fmt.Errorf("lock the seed: %w", err)
-			}
-		}
-		// Links are deleted for good, so a site can have none: its providers
-		// also tell it apart from a new database.
-		var links, providers int64
-		if err := tx.Unscoped().Model(&models.HelpfulLink{}).Count(&links).Error; err != nil {
-			return fmt.Errorf("count helpful links: %w", err)
-		}
-		if err := tx.Unscoped().Model(&models.OpenContentProvider{}).Where("title IN ?", []string{models.Kiwix, models.Youtube}).Count(&providers).Error; err != nil {
-			return fmt.Errorf("count Kiwix and YouTube providers: %w", err)
-		}
-		if links > 0 || providers > 0 {
-			return nil
-		}
-		var facilityID uint
-		if err := tx.Table("facilities").Select("id").Order("id").Limit(1).Scan(&facilityID).Error; err != nil {
-			return fmt.Errorf("find core's first facility: %w", err)
-		}
-		if facilityID == 0 {
-			return errNoFacility
-		}
-		// Core's seed recorded its rows as made by the system_batch user.
-		var batchUserID uint
-		if err := tx.Table("users").Select("id").Where("username = ?", "system_batch").Limit(1).Scan(&batchUserID).Error; err != nil {
-			return fmt.Errorf("find the system_batch user: %w", err)
-		}
-		if batchUserID != 0 {
-			tx = tx.WithContext(identity.NewContext(tx.Statement.Context, &identity.Claims{UserID: batchUserID}))
-		}
-		if err := seed(tx, facilityID); err != nil {
-			return err
-		}
-		log.Infof("Seeded the default helpful links and providers, visible at facility %d", facilityID)
-		return nil
-	})
-}
-
-// seed adds the default helpful links, visible at facilityID, and the Kiwix
-// and YouTube providers.
-func seed(db *gorm.DB, facilityID uint) error {
-	links := []models.HelpfulLink{}
-	if err := json.Unmarshal([]byte(defaultLeftMenuLinks), &links); err != nil {
-		return fmt.Errorf("read default left menu links: %w", err)
-	}
-	if err := db.Create(&links).Error; err != nil {
-		return fmt.Errorf("create left menu links: %w", err)
-	}
-	for _, link := range links {
-		if link.OpenContentProviderID == 0 {
-			continue
-		}
-		visibility := models.FacilityVisibilityStatus{
-			FacilityID:            facilityID,
-			OpenContentProviderID: link.OpenContentProviderID,
-			ContentID:             link.ID,
-			VisibilityStatus:      true,
-		}
-		if err := db.Create(&visibility).Error; err != nil {
-			return fmt.Errorf("create link visibility: %w", err)
-		}
-	}
-	providers := []models.OpenContentProvider{
-		{Title: models.StringPtr(models.Kiwix), Url: models.KiwixLibraryUrl, CurrentlyEnabled: true, ThumbnailUrl: models.StringPtr(models.KiwixThumbnailURL), Description: models.StringPtr(models.Kiwix)},
-		{Title: models.StringPtr(models.Youtube), Url: models.YoutubeApi, CurrentlyEnabled: true, ThumbnailUrl: models.StringPtr(models.YoutubeThumbnail), Description: models.StringPtr(models.YoutubeDescription)},
-	}
-	for i := range providers {
-		if err := db.Create(&providers[i]).Error; err != nil {
-			return fmt.Errorf("create default open content providers: %w", err)
-		}
-	}
-	return nil
 }

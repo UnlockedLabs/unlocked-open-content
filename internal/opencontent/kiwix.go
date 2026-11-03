@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/UnlockedLabs/unlocked-open-content/internal/database"
 	"github.com/UnlockedLabs/unlocked-open-content/internal/models"
 	log "github.com/sirupsen/logrus"
 )
@@ -23,10 +24,10 @@ type KiwixService struct {
 	BaseUrl               string
 	Client                *http.Client
 	params                map[string]any
-	store                 *store
+	db                    *database.DB
 }
 
-func NewKiwixService(openContentProvider *models.OpenContentProvider, store *store, params map[string]any) *KiwixService {
+func NewKiwixService(openContentProvider *models.OpenContentProvider, db *database.DB, params map[string]any) *KiwixService {
 	url := fmt.Sprintf("%s%s%d", openContentProvider.Url, KiwixCatalogUrl, maxLibraries)
 	client := http.Client{}
 	return &KiwixService{
@@ -35,7 +36,7 @@ func NewKiwixService(openContentProvider *models.OpenContentProvider, store *sto
 		Url:                   url,
 		params:                params,
 		Client:                &client,
-		store:                 store,
+		db:                    db,
 	}
 }
 
@@ -87,7 +88,7 @@ func (ks *KiwixService) ImportLibraries(ctx context.Context) error {
 		}
 	}
 	log.Infoln("Removing any deleted Kiwix libraries")
-	removed, err := ks.store.DeleteLibrariesNotIn(ctx, ks.OpenContentProviderId, externalIds)
+	removed, err := ks.db.DeleteLibrariesNotIn(ctx, ks.OpenContentProviderId, externalIds)
 	if err != nil {
 		log.Errorf("error removing deleted entries: %v", err)
 		return err
@@ -99,7 +100,7 @@ func (ks *KiwixService) ImportLibraries(ctx context.Context) error {
 func (ks *KiwixService) UpdateOrInsertLibrary(ctx context.Context, entry models.Entry, providerId uint) error {
 	log.Infof("Attempting to insert or update library from Kiwix: %v", entry.Title)
 	library := ks.IntoLibrary(entry, providerId)
-	if err := ks.store.UpsertLibrary(ctx, library); err != nil {
+	if err := ks.db.UpsertLibrary(ctx, library); err != nil {
 		log.Errorln("Error updating or inserting library: ", err)
 		return err
 	}

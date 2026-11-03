@@ -19,7 +19,6 @@ import (
 	"github.com/UnlockedLabs/unlocked-open-content/internal/server"
 	"github.com/nats-io/nats.go"
 	log "github.com/sirupsen/logrus"
-	"gorm.io/gorm"
 )
 
 const usage = "usage: app serve | app worker | app migrate | app seed-dev | app migrate-reset"
@@ -99,7 +98,7 @@ func migrate(ctx context.Context) error {
 		return err
 	}
 	defer func() { _ = owner.Close() }()
-	if err := opencontent.Migrate(ctx, owner); err != nil {
+	if err := database.Migrate(ctx, owner); err != nil {
 		return err
 	}
 	log.Info("Migrations completed successfully")
@@ -117,7 +116,7 @@ func seedDev(ctx context.Context) error {
 		return err
 	}
 	defer closeAll(db, nil)
-	return opencontent.SeedDev(ctx, db)
+	return db.SeedDev(ctx)
 }
 
 // migrateReset rolls back Open Content's migrations, for core's
@@ -132,12 +131,12 @@ func migrateReset(ctx context.Context) error {
 		return err
 	}
 	defer func() { _ = owner.Close() }()
-	return opencontent.Reset(ctx, owner)
+	return database.Reset(ctx, owner)
 }
 
 // connect opens Open Content's database connection (connectDB) and connects
 // to NATS with NATS_URL, NATS_USER and NATS_PASSWORD.
-func connect(ctx context.Context) (*gorm.DB, *nats.Conn, error) {
+func connect(ctx context.Context) (*database.DB, *nats.Conn, error) {
 	db, err := connectDB(ctx)
 	if err != nil {
 		return nil, nil, err
@@ -152,22 +151,26 @@ func connect(ctx context.Context) (*gorm.DB, *nats.Conn, error) {
 
 // connectDB waits until the database is migrated, then opens Open Content's
 // connection to it.
-func connectDB(ctx context.Context) (*gorm.DB, error) {
+func connectDB(ctx context.Context) (*database.DB, error) {
 	owner, err := database.Open(ctx, database.DSN("allow"))
 	if err != nil {
 		return nil, err
 	}
-	err = opencontent.WaitForMigrations(ctx, owner)
+	err = database.WaitForMigrations(ctx, owner)
 	_ = owner.Close()
 	if err != nil {
 		return nil, fmt.Errorf("wait for migrations: %w", err)
 	}
-	return database.OpenAs(ctx, database.DSN("allow"), opencontent.Schema)
+	db, err := database.OpenAs(ctx, database.DSN("allow"), database.Schema)
+	if err != nil {
+		return nil, err
+	}
+	return database.NewDB(db), nil
 }
 
 // closeAll closes db, then nc, which may be nil.
-func closeAll(db *gorm.DB, nc *nats.Conn) {
-	if sqlDB, err := db.DB(); err == nil {
+func closeAll(db *database.DB, nc *nats.Conn) {
+	if sqlDB, err := db.DB.DB(); err == nil {
 		if err := sqlDB.Close(); err != nil {
 			log.Errorf("close database: %v", err)
 		}

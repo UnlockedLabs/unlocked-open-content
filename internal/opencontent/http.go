@@ -10,9 +10,9 @@ import (
 	"time"
 
 	"github.com/UnlockedLabs/unlocked-contracts/identity"
+	"github.com/UnlockedLabs/unlocked-open-content/internal/database"
 	"github.com/UnlockedLabs/unlocked-open-content/internal/models"
 	"github.com/sirupsen/logrus"
-	"gorm.io/gorm"
 )
 
 // The response, error, paging and request helpers Open Content's handlers
@@ -167,7 +167,7 @@ func (svcErr serviceError) Error() string {
 
 func newServiceError(err error, status int, msg string) serviceError {
 	svcErr := serviceError{Status: status, Message: msg, Err: err}
-	if dbErr, ok := err.(dbError); ok {
+	if dbErr, ok := err.(database.DBError); ok {
 		svcErr.Err = errors.Join(errors.New(dbErr.Message), dbErr.InternalErr)
 	}
 	return svcErr
@@ -208,61 +208,10 @@ func newInternalServerServiceError(err error, msg string) serviceError {
 // newDatabaseServiceError answers with a dbError's status and message, and
 // with a 500 and the error's text for any other error.
 func newDatabaseServiceError(err error) serviceError {
-	if dbErr, ok := err.(dbError); ok {
+	if dbErr, ok := err.(database.DBError); ok {
 		return serviceError{Status: dbErr.Status, Message: dbErr.Message, Err: dbErr.InternalErr}
 	}
 	return serviceError{Status: http.StatusInternalServerError, Message: err.Error(), Err: err}
-}
-
-// dbError is a failed query, with the status and message to answer with.
-type dbError struct {
-	Status      int
-	Message     string
-	InternalErr error
-}
-
-func (e dbError) Error() string {
-	return fmt.Sprintf("db error: %s", e.InternalErr.Error())
-}
-
-func newDBError(err error, msg string) dbError {
-	dbErr := dbError{Message: msg, InternalErr: err}
-	switch {
-	case errors.Is(err, gorm.ErrRecordNotFound),
-		errors.Is(err, gorm.ErrInvalidData),
-		errors.Is(err, gorm.ErrEmptySlice),
-		errors.Is(err, gorm.ErrInvalidField),
-		errors.Is(err, gorm.ErrInvalidValueOfLength):
-		dbErr.Status = http.StatusBadRequest
-	case errors.Is(err, gorm.ErrPrimaryKeyRequired),
-		errors.Is(err, gorm.ErrForeignKeyViolated),
-		errors.Is(err, gorm.ErrDuplicatedKey),
-		errors.Is(err, gorm.ErrCheckConstraintViolated):
-		dbErr.Status = http.StatusUnprocessableEntity
-	default:
-		dbErr.Status = http.StatusInternalServerError
-	}
-	return dbErr
-}
-
-func newGetRecordsDBError(err error, table string) dbError {
-	return newDBError(err, fmt.Sprintf("error getting %s", table))
-}
-
-func newDeleteDBError(err error, table string) dbError {
-	return newDBError(err, fmt.Sprintf("error deleting %s", table))
-}
-
-func newCreateDBError(err error, table string) dbError {
-	return newDBError(err, fmt.Sprintf("error creating %s", table))
-}
-
-func newUpdateDBError(err error, table string) dbError {
-	return newDBError(err, fmt.Sprintf("error updating %s", table))
-}
-
-func newNotFoundDBError(err error, table string) dbError {
-	return newDBError(err, fmt.Sprintf("%s not found", table))
 }
 
 // claimsFrom is the caller of a request. The router serves only requests the

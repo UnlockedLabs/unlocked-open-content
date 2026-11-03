@@ -11,9 +11,9 @@ import (
 	"github.com/UnlockedLabs/unlocked-contracts/features"
 	"github.com/UnlockedLabs/unlocked-contracts/identity"
 	"github.com/UnlockedLabs/unlocked-contracts/users"
+	"github.com/UnlockedLabs/unlocked-open-content/internal/database"
 	"github.com/UnlockedLabs/unlocked-open-content/internal/models"
 	"github.com/stretchr/testify/require"
-	"gorm.io/gorm"
 )
 
 // These tests came from core's tests/integration (library_facility_visibility,
@@ -40,7 +40,7 @@ const (
 )
 
 // insertID runs an INSERT and returns the new row's id.
-func insertID(t *testing.T, db *gorm.DB, sql string, args ...any) uint {
+func insertID(t *testing.T, db *database.DB, sql string, args ...any) uint {
 	t.Helper()
 	var id uint
 	require.NoError(t, db.Raw(sql+" RETURNING id", args...).Scan(&id).Error, sql)
@@ -145,7 +145,7 @@ func TestLibraryFacilityVisibility(t *testing.T) {
 func TestLibraryProxyCache(t *testing.T) {
 	db := newTestDB(t)
 	seedCore(t, db, "Facility A", "Facility B")
-	srv := &server{store: &store{db: db}, notify: &fakeNotifier{}, client: &http.Client{}, libraryPaths: newFakeKV()}
+	srv := &server{db: db, notify: &fakeNotifier{}, client: &http.Client{}, libraryPaths: newFakeKV()}
 	ts := httptest.NewServer(newRouter(srv.routes(), testLogin))
 	t.Cleanup(ts.Close)
 	client := ts.Client()

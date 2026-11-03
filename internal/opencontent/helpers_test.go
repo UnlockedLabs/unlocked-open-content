@@ -2,32 +2,21 @@ package opencontent
 
 import (
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
-	"github.com/UnlockedLabs/unlocked-open-content/internal/models"
-	"github.com/glebarez/sqlite"
+	"github.com/UnlockedLabs/unlocked-open-content/internal/database"
+	"github.com/UnlockedLabs/unlocked-open-content/internal/testutil"
 	"github.com/nats-io/nats.go"
-	"gorm.io/gorm"
 )
 
 // newTestDB returns an empty in-memory database with Open Content's tables.
-func newTestDB(t *testing.T) *gorm.DB {
+func newTestDB(t *testing.T) *database.DB {
 	t.Helper()
-	dsn := fmt.Sprintf("file:%s_%d?mode=memory&cache=shared", strings.ReplaceAll(t.Name(), "/", "_"), time.Now().UnixNano())
-	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{DisableForeignKeyConstraintWhenMigrating: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := db.AutoMigrate(testModels()...); err != nil {
-		t.Fatal(err)
-	}
-	return db
+	return database.NewDB(testutil.NewDB(t))
 }
 
 // fakeCore stands in for the server's thumbnail endpoints: HEAD
@@ -95,23 +84,6 @@ func (fc *fakeCore) Uploads() []upload {
 // image returns a fake image of n bytes.
 func image(n int) []byte {
 	return []byte(strings.Repeat("x", n))
-}
-
-// testModels is Open Content's tables, for the SQLite test databases.
-func testModels() []any {
-	return []any{
-		&models.HelpfulLink{},
-		&models.OpenContentProvider{},
-		&models.OpenContentUrl{},
-		&models.OpenContentActivity{},
-		&models.Library{},
-		&models.FacilityVisibilityStatus{},
-		&models.Video{},
-		&models.VideoDownloadAttempt{},
-		&models.OpenContentFavorite{},
-		&models.Tag{},
-		&models.OpenContentTag{},
-	}
 }
 
 // fakeKV is the library_paths bucket in memory: Get, Put and Create, as

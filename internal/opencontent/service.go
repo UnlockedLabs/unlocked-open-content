@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	api "github.com/UnlockedLabs/unlocked-contracts/opencontent"
+	"github.com/UnlockedLabs/unlocked-open-content/internal/database"
 	"github.com/UnlockedLabs/unlocked-open-content/internal/models"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -22,7 +23,7 @@ import (
 // a running service are nil in tests: S3 without S3_BUCKET_NAME, the library
 // cache and job publishing without NATS.
 type server struct {
-	store  *store
+	db     *database.DB
 	notify notifier
 	nats   *nats.Conn
 	// libraryPaths caches each library's proxy target (LibraryProxyPO) at
@@ -39,30 +40,30 @@ type server struct {
 // Facility visibility
 
 func (srv *server) setHelpfulLinkVisibility(args *models.QueryContext, id int, facilityIDs []uint, visible bool) error {
-	link, err := srv.store.GetLinkFromId(uint(id))
+	link, err := srv.db.GetLinkFromId(uint(id))
 	if err != nil {
 		return err
 	}
 	statuses := buildVisibilityStatuses(link.ID, link.OpenContentProviderID, facilityIDs, visible)
-	return srv.store.UpsertFacilityVisibilityStatuses(args, statuses, visible)
+	return srv.db.UpsertFacilityVisibilityStatuses(args, statuses, visible)
 }
 
 func (srv *server) setVideoVisibility(args *models.QueryContext, id int, facilityIDs []uint, visible bool) error {
-	video, err := srv.store.GetVideoByID(id, args.FacilityID)
+	video, err := srv.db.GetVideoByID(id, args.FacilityID)
 	if err != nil {
 		return err
 	}
 	statuses := buildVisibilityStatuses(video.ID, video.OpenContentProviderID, facilityIDs, visible)
-	return srv.store.UpsertFacilityVisibilityStatuses(args, statuses, visible)
+	return srv.db.UpsertFacilityVisibilityStatuses(args, statuses, visible)
 }
 
 func (srv *server) setLibraryVisibility(args *models.QueryContext, id int, facilityIDs []uint, visible bool) (*models.Library, error) {
-	library, err := srv.store.GetLibraryByID(id)
+	library, err := srv.db.GetLibraryByID(id)
 	if err != nil {
 		return nil, err
 	}
 	statuses := buildVisibilityStatuses(library.ID, library.OpenContentProviderID, facilityIDs, visible)
-	if err := srv.store.UpsertFacilityVisibilityStatuses(args, statuses, visible); err != nil {
+	if err := srv.db.UpsertFacilityVisibilityStatuses(args, statuses, visible); err != nil {
 		return nil, err
 	}
 	library.VisibilityStatus = visible
@@ -118,12 +119,12 @@ func (n natsNotifier) Notify(msg api.Notification) {
 // tab: the activity, so the tab can end it, and for a library page whether
 // it is bookmarked.
 func (srv *server) createContentActivityAndNotifyWS(urlString string, activity *models.OpenContentActivity) {
-	srv.store.CreateContentActivity(urlString, activity)
+	srv.db.CreateContentActivity(urlString, activity)
 	if activity.ID > 0 {
 		srv.notify.Notify(api.Notification{UserID: activity.UserID, Event: visitEvent, ActivityID: activity.ID})
 		if !strings.HasPrefix(urlString, "/viewer/videos") {
 			msg := "false"
-			if srv.store.isBookmarked(activity) {
+			if srv.db.IsBookmarked(activity) {
 				msg = "true"
 			}
 			srv.notify.Notify(api.Notification{UserID: activity.UserID, Event: bookmarkEvent, Text: msg})

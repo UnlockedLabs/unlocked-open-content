@@ -2,11 +2,12 @@ package opencontent
 
 import (
 	"context"
-	"github.com/UnlockedLabs/unlocked-open-content/internal/models"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/UnlockedLabs/unlocked-open-content/internal/models"
 )
 
 // kiwixFeed is a catalog in Kiwix's format. The summaries hold a raw "&",
@@ -91,7 +92,7 @@ func TestImportLibraries(t *testing.T) {
 		}
 	}
 
-	ks := NewKiwixService(kiwixProvider(1, kiwix.URL), &store{db: db}, map[string]any{"job_id": "job-1"})
+	ks := NewKiwixService(kiwixProvider(1, kiwix.URL), db, map[string]any{"job_id": "job-1"})
 	if err := ks.ImportLibraries(context.Background()); err != nil {
 		t.Fatalf("ImportLibraries: %v", err)
 	}
@@ -171,7 +172,7 @@ func TestImportLibrariesFailure(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			ks := NewKiwixService(kiwixProvider(1, kiwix.URL), &store{db: db}, map[string]any{"job_id": "job-1"})
+			ks := NewKiwixService(kiwixProvider(1, kiwix.URL), db, map[string]any{"job_id": "job-1"})
 			if err := ks.ImportLibraries(context.Background()); err == nil {
 				t.Fatal("ImportLibraries succeeded, want an error")
 			}
@@ -196,7 +197,7 @@ func TestImportLibrariesEmptyCatalog(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	ks := NewKiwixService(kiwixProvider(1, kiwix.URL), &store{db: db}, map[string]any{"job_id": "job-1"})
+	ks := NewKiwixService(kiwixProvider(1, kiwix.URL), db, map[string]any{"job_id": "job-1"})
 	if err := ks.ImportLibraries(context.Background()); err != nil {
 		t.Fatalf("ImportLibraries: %v", err)
 	}

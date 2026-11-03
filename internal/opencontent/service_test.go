@@ -1,16 +1,13 @@
 package opencontent
 
 import (
-	"fmt"
 	"testing"
 	"time"
 
 	api "github.com/UnlockedLabs/unlocked-contracts/opencontent"
 	"github.com/UnlockedLabs/unlocked-open-content/internal/models"
-	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gorm.io/gorm"
 )
 
 type fakeNotifier struct{ sent []api.Notification }
@@ -19,25 +16,12 @@ func (n *fakeNotifier) Notify(msg api.Notification) {
 	n.sent = append(n.sent, msg)
 }
 
-// openTestDB is a new in-memory database with Open Content's tables, closed
-// when the test ends.
-func openTestDB(t *testing.T) *gorm.DB {
-	t.Helper()
-	db, err := gorm.Open(sqlite.Open(fmt.Sprintf("file:opencontent_%d?mode=memory&cache=shared", time.Now().UnixNano())), &gorm.Config{})
-	require.NoError(t, err)
-	sqlDB, err := db.DB()
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = sqlDB.Close() })
-	require.NoError(t, db.AutoMigrate(testModels()...))
-	return db
-}
-
 // A visit is recorded, and the user's tab is told about it so it can end the
 // activity. A library page also says whether it is bookmarked.
 func TestCreateContentActivityAndNotifyWS(t *testing.T) {
-	db := openTestDB(t)
+	db := newTestDB(t)
 	notify := &fakeNotifier{}
-	srv := &server{store: &store{db: db}, notify: notify}
+	srv := &server{db: db, notify: notify}
 
 	page := "/api/proxy/libraries/1/A/Lesson_1"
 	visit := func(url string) int64 {

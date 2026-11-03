@@ -84,7 +84,7 @@ and read only core's `users` and `facilities`: the connection switches with
 `SET ROLE open_content`, so the service logs in with core's database user and
 needs no password of its own.
 
-- **Migrations** are in `internal/opencontent/migrations` and run as core's
+- **Migrations** are in `internal/database/migrations` and run as core's
   database user. Their ledger is `public.goose_db_version_opencontent`, the
   one core used, so a site that ran them inside core doesn't run them again.
   Never edit a merged migration; add a new one.

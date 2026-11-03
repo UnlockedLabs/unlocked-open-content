@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/UnlockedLabs/unlocked-open-content/internal/database"
 	"github.com/UnlockedLabs/unlocked-open-content/internal/models"
-	"gorm.io/gorm"
 )
 
 // fakeYtDlp is a stand-in yt-dlp. It logs each call's arguments, prints
@@ -98,15 +98,15 @@ func newFakeThumbnails(t *testing.T) *httptest.Server {
 
 const youtubeProviderID = 2
 
-func newVideoService(t *testing.T, db *gorm.DB, body map[string]any) *VideoService {
+func newVideoService(t *testing.T, db *database.DB, body map[string]any) *VideoService {
 	t.Helper()
 	t.Setenv("S3_BUCKET_NAME", "")
 	p := &models.OpenContentProvider{Url: "https://www.youtube.com"}
 	p.ID = youtubeProviderID
-	return NewVideoService(p, &store{db: db}, body)
+	return NewVideoService(p, db, body)
 }
 
-func createVideo(t *testing.T, db *gorm.DB, v *models.Video) *models.Video {
+func createVideo(t *testing.T, db *database.DB, v *models.Video) *models.Video {
 	t.Helper()
 	if v.OpenContentProviderID == 0 {
 		v.OpenContentProviderID = youtubeProviderID
@@ -117,7 +117,7 @@ func createVideo(t *testing.T, db *gorm.DB, v *models.Video) *models.Video {
 	return v
 }
 
-func attempts(t *testing.T, db *gorm.DB, videoID uint) []models.VideoDownloadAttempt {
+func attempts(t *testing.T, db *database.DB, videoID uint) []models.VideoDownloadAttempt {
 	t.Helper()
 	var got []models.VideoDownloadAttempt
 	if err := db.Where("video_id = ?", videoID).Order("id").Find(&got).Error; err != nil {

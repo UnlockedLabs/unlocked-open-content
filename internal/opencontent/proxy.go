@@ -47,7 +47,7 @@ func (srv *server) videoProxyMiddleware(next http.Handler) http.Handler {
 			http.Redirect(w, r, authCallbackRoute, http.StatusSeeOther)
 			return
 		}
-		video, err := srv.store.findVideoProxy(r.PathValue("id"), user.FacilityID, user.IsAdmin())
+		video, err := srv.db.FindVideoProxy(r.PathValue("id"), user.FacilityID, user.IsAdmin())
 		if err != nil {
 			errorResponse(w, http.StatusNotFound, "Video not found, is not available or visibility is not enabled")
 			return
@@ -99,7 +99,7 @@ func (srv *server) libraryProxyParams(resourceID string, facilityID uint) (*mode
 	if proxyParams, ok := srv.cachedLibraryProxy(key); ok {
 		return proxyParams, true
 	}
-	library, ok := srv.store.findLibraryProxy(resourceID, facilityID)
+	library, ok := srv.db.FindLibraryProxy(resourceID, facilityID)
 	if !ok {
 		return nil, false
 	}

@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/UnlockedLabs/unlocked-open-content/internal/database"
 	"github.com/UnlockedLabs/unlocked-open-content/internal/models"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
@@ -33,7 +34,7 @@ type VideoService struct {
 	OpenContentProviderID uint
 	Client                *http.Client
 	Body                  map[string]any
-	store                 *store
+	db                    *database.DB
 	bucketName            string
 	s3Svc                 *s3.Client
 }
@@ -42,7 +43,7 @@ type VideoService struct {
 // point it at a temp dir.
 var videosDir = "/videos/"
 
-func NewVideoService(prov *models.OpenContentProvider, store *store, body map[string]any) *VideoService {
+func NewVideoService(prov *models.OpenContentProvider, db *database.DB, body map[string]any) *VideoService {
 	bucketName := os.Getenv("S3_BUCKET_NAME")
 	var svc *s3.Client = nil
 	if bucketName != "" {
@@ -58,7 +59,7 @@ func NewVideoService(prov *models.OpenContentProvider, store *store, body map[st
 		Client:                &http.Client{},
 		Body:                  body,
 		OpenContentProviderID: prov.ID,
-		store:                 store,
+		db:                    db,
 		bucketName:            bucketName,
 		s3Svc:                 svc,
 	}
@@ -95,7 +96,7 @@ func (yt *VideoService) syncVideoMetadata(ctx context.Context) error {
 	if len(jsonIDs) == 0 {
 		return nil
 	}
-	count, err := yt.store.CountVideos(ctx)
+	count, err := yt.db.CountVideos(ctx)
 	if err != nil {
 		log.Errorf("error counting videos in DB: %v", err)
 		return err
@@ -106,7 +107,7 @@ func (yt *VideoService) syncVideoMetadata(ctx context.Context) error {
 	}
 
 	// fetch existing video IDs from DB that match any json file
-	existingVideos, err := yt.store.GetSavedVideoExternalIDs(ctx, jsonIDs)
+	existingVideos, err := yt.db.GetSavedVideoExternalIDs(ctx, jsonIDs)
 	if err != nil {
 		log.Errorf("error fetching existing video IDs from DB: %v", err)
 		return err
@@ -137,14 +138,14 @@ func (yt *VideoService) syncVideoMetadata(ctx context.Context) error {
 				log.Errorf("failed to parse %s: %v", path, err)
 				continue
 			}
-			if err := yt.store.CreateVideo(ctx, &video); err != nil {
+			if err := yt.db.CreateVideo(ctx, &video); err != nil {
 				log.Errorf("failed to insert video %s into db: %v", id, err)
 			}
 		}
 	}
 
 	// fetch videos in DB that don't exist as json files (unlikely path)
-	missingFiles, err := yt.store.GetVideosNotIn(ctx, jsonIDs)
+	missingFiles, err := yt.db.GetVideosNotIn(ctx, jsonIDs)
 	if err != nil {
 		log.Errorf("error fetching videos missing from disk: %v", err)
 		return err
@@ -275,7 +276,7 @@ func stripUrlsFromDescription(desc string) string {
 }
 
 func (vs *VideoService) retryFailedVideos(ctx context.Context) error {
-	videos, err := vs.store.GetUnavailableVideos(ctx)
+	videos, err := vs.db.GetUnavailableVideos(ctx)
 	if err != nil {
 		log.Errorf("error fetching failed videos: %v", err)
 	}
@@ -298,7 +299,7 @@ func (vs *VideoService) retryFailedVideos(ctx context.Context) error {
 }
 
 func (vs *VideoService) retrySingleVideo(ctx context.Context, videoId int) error {
-	video, err := vs.store.GetVideoWithAttempts(ctx, videoId)
+	video, err := vs.db.GetVideoWithAttempts(ctx, videoId)
 	if err != nil {
 		log.Errorf("error fetching video: %v", err)
 		return vs.incrementFailedAttempt(ctx, &models.Video{}, err.Error())
@@ -338,9 +339,9 @@ func (yt *VideoService) addVideos(ctx context.Context) error {
 			var videoExists bool
 			var err error
 			if strings.Contains(urlStr, "youtu") {
-				videoExists, err = yt.store.VideoExternalIDExists(ctx, ytIdFromUrl(urlStr))
+				videoExists, err = yt.db.VideoExternalIDExists(ctx, ytIdFromUrl(urlStr))
 			} else {
-				videoExists, err = yt.store.VideoURLExists(ctx, urlStr)
+				videoExists, err = yt.db.VideoURLExists(ctx, urlStr)
 			}
 			if err != nil || videoExists {
 				log.Errorf("video already exists: %v", urlStr)
@@ -362,13 +363,13 @@ func (yt *VideoService) addVideos(ctx context.Context) error {
 }
 
 func (yt *VideoService) incrementFailedAttempt(ctx context.Context, vid *models.Video, vidError string) error {
-	numAttempts, err := yt.store.CountVideoDownloadAttempts(ctx, vid.ID)
+	numAttempts, err := yt.db.CountVideoDownloadAttempts(ctx, vid.ID)
 	if err != nil {
 		log.Errorf("error counting download attempts: %v", err)
 		return err
 	}
 	if numAttempts >= int64(models.MAX_DOWNLOAD_ATTEMPTS) {
-		if err := yt.store.DeleteVideo(int(vid.ID)); err != nil {
+		if err := yt.db.DeleteVideo(int(vid.ID)); err != nil {
 			log.Errorf("error deleting video: %v", err)
 			return err
 		}
@@ -380,11 +381,11 @@ func (yt *VideoService) incrementFailedAttempt(ctx context.Context, vid *models.
 	}
 	if vidError != "" {
 		vid.Availability = models.VideoHasError
-		if err := yt.store.SaveVideo(ctx, vid); err != nil {
+		if err := yt.db.SaveVideo(ctx, vid); err != nil {
 			log.Errorf("error saving video: %v", err)
 		}
 	}
-	return yt.store.CreateVideoDownloadAttempt(ctx, &attempt)
+	return yt.db.CreateVideoDownloadAttempt(ctx, &attempt)
 }
 
 func (yt *VideoService) fetchAndSaveInitialVideoInfo(ctx context.Context, vidUrl string, avail bool) (*goutubedl.Result, *models.Video, error) {
@@ -420,7 +421,7 @@ func (yt *VideoService) fetchAndSaveInitialVideoInfo(ctx context.Context, vidUrl
 	} else {
 		vid.Availability = models.VideoProcessing
 	}
-	if err := yt.store.CreateVideo(ctx, vid); err != nil {
+	if err := yt.db.CreateVideo(ctx, vid); err != nil {
 		log.Errorln(err)
 		return nil, nil, err
 	}
@@ -521,7 +522,7 @@ func (yt *VideoService) downloadVideo(ctx context.Context, vidInfo *goutubedl.Re
 		}
 	}
 	video.Availability = models.VideoAvailable
-	return yt.store.SaveVideo(ctx, video)
+	return yt.db.SaveVideo(ctx, video)
 }
 
 func (yt *VideoService) uploadFileToS3(ctx context.Context, file *os.File, video *models.Video) error {

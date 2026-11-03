@@ -19,11 +19,11 @@ import (
 	"github.com/UnlockedLabs/unlocked-contracts/features"
 	"github.com/UnlockedLabs/unlocked-contracts/identity"
 	"github.com/UnlockedLabs/unlocked-contracts/users"
+	"github.com/UnlockedLabs/unlocked-open-content/internal/database"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gorm.io/gorm"
 )
 
 // These tests pin what every route answers: the status and the JSON, and who
@@ -67,9 +67,9 @@ func newRouteTest(t *testing.T) (*httptest.Server, *http.Client) {
 }
 
 // newRouteServer starts the routes on db.
-func newRouteServer(t *testing.T, db *gorm.DB) (*httptest.Server, *http.Client) {
+func newRouteServer(t *testing.T, db *database.DB) (*httptest.Server, *http.Client) {
 	t.Helper()
-	srv := &server{store: &store{db: db}, notify: &fakeNotifier{}, client: &http.Client{}}
+	srv := &server{db: db, notify: &fakeNotifier{}, client: &http.Client{}}
 	ts := httptest.NewServer(newRouter(srv.routes(), testLogin))
 	t.Cleanup(ts.Close)
 	client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
@@ -91,9 +91,9 @@ func testLogin(next http.Handler) http.Handler {
 
 // seedCore adds what core's test database started with that the routes read:
 // its default facility, then facilities (North and South unless given), and
-// the default helpful links and providers its seed added as user 99999,
-// visible at the default facility.
-func seedCore(t *testing.T, db *gorm.DB, facilities ...string) {
+// the default helpful links and providers its seed added as system_batch
+// (user 99999), visible at the default facility.
+func seedCore(t *testing.T, db *database.DB, facilities ...string) {
 	t.Helper()
 	if facilities == nil {
 		facilities = []string{"North", "South"}
@@ -102,15 +102,16 @@ func seedCore(t *testing.T, db *gorm.DB, facilities ...string) {
 	for _, name := range append([]string{"Default"}, facilities...) {
 		require.NoError(t, db.Exec(`INSERT INTO facilities (name) VALUES (?)`, name).Error)
 	}
-	seedCtx := identity.NewContext(t.Context(), &identity.Claims{UserID: 99999})
-	require.NoError(t, seed(db.WithContext(seedCtx), 1))
+	require.NoError(t, db.Exec(`CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT NOT NULL)`).Error)
+	require.NoError(t, db.Exec(`INSERT INTO users (id, username) VALUES (99999, 'system_batch')`).Error)
+	require.NoError(t, db.Seed(t.Context()))
 }
 
 // seedOpenContent adds two libraries, two videos and a helpful link at the
 // North facility, plus a favorite and some reading activity for the resident.
 // Production's migrations also add a HelpfulLinks provider and the links
 // point to it, so the seed does the same here.
-func seedOpenContent(t *testing.T, db *gorm.DB) {
+func seedOpenContent(t *testing.T, db *database.DB) {
 	t.Helper()
 	// Fixed times keep the ordering stable; recent ones fall inside the
 	// activity routes' default two-week window.

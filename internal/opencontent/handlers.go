@@ -105,7 +105,7 @@ func (srv *server) handleIndexLibraries(w http.ResponseWriter, r *http.Request, 
 		log.add("category_ids", strings.Join(args.Tags, ","))
 		log.info("Libraries are being filtered by categories")
 	}
-	libraries, err := srv.store.GetAllLibraries(&args, showHidden)
+	libraries, err := srv.db.GetAllLibraries(&args, showHidden)
 	if err != nil {
 		return newDatabaseServiceError(err)
 	}
@@ -117,7 +117,7 @@ func (srv *server) handleGetLibrary(w http.ResponseWriter, r *http.Request, log 
 	if err != nil {
 		return newInvalidIdServiceError(err, "library id")
 	}
-	library, err := srv.store.GetLibraryByID(id)
+	library, err := srv.db.GetLibraryByID(id)
 	if err != nil {
 		log.add("library_id", id)
 		return newDatabaseServiceError(err)
@@ -175,7 +175,7 @@ func (srv *server) handleSearchOpenContent(w http.ResponseWriter, r *http.Reques
 	// only the included library, so we omit title search
 	queryCtx := facilityScopedQueryContext(r)
 	if page == 1 && len(libraryIDs) == 0 {
-		titleSearch, err = srv.store.OpenContentTitleSearch(&queryCtx)
+		titleSearch, err = srv.db.OpenContentTitleSearch(&queryCtx)
 		if err != nil {
 			log.error("error performing title search on open content")
 		}
@@ -190,9 +190,9 @@ func (srv *server) handleSearchOpenContent(w http.ResponseWriter, r *http.Reques
 		return writePaginatedResponse(w, http.StatusOK, channels, paginationData)
 	}
 	if len(libraryIDs) > 0 {
-		libraries, err = srv.store.GetLibrariesByIDsAndLang(libraryIDs, "eng")
+		libraries, err = srv.db.GetLibrariesByIDsAndLang(libraryIDs, "eng")
 	} else {
-		libraries, err = srv.store.GetAllLibrariesByLang(&queryCtx, "eng")
+		libraries, err = srv.db.GetAllLibrariesByLang(&queryCtx, "eng")
 	}
 	if err != nil {
 		log.add("library_ids", libraryIDs)
@@ -271,7 +271,7 @@ func (srv *server) handleToggleLibraryVisibility(w http.ResponseWriter, r *http.
 	if err != nil {
 		return newInvalidIdServiceError(err, "library id")
 	}
-	library, err := srv.store.ToggleVisibilityAndRetrieveLibrary(id, &args)
+	library, err := srv.db.ToggleVisibilityAndRetrieveLibrary(id, &args)
 	if err != nil {
 		log.add("library_id", id)
 		return newDatabaseServiceError(err)
@@ -286,7 +286,7 @@ func (srv *server) handleGetLibraryFacilityVisibility(w http.ResponseWriter, r *
 	if err != nil {
 		return newInvalidIdServiceError(err, "library id")
 	}
-	visibilities, err := srv.store.GetLibraryFacilityVisibility(&args, id)
+	visibilities, err := srv.db.GetLibraryFacilityVisibility(&args, id)
 	if err != nil {
 		log.add("library_id", id)
 		return newDatabaseServiceError(err)
@@ -332,18 +332,18 @@ func (srv *server) handleToggleFavoriteLibrary(w http.ResponseWriter, r *http.Re
 		// an admin toggling this will save the facilityID as a 'featured' library for that facility
 		facilityID = &claims.FacilityID
 	}
-	library, err := srv.store.GetLibraryByID(libraryID)
+	library, err := srv.db.GetLibraryByID(libraryID)
 	if err != nil {
 		return newDatabaseServiceError(err)
 	}
-	if _, err := srv.store.FavoriteOpenContent(libraryID, library.OpenContentProviderID, claims.UserID, facilityID); err != nil {
+	if _, err := srv.db.FavoriteOpenContent(libraryID, library.OpenContentProviderID, claims.UserID, facilityID); err != nil {
 		return newDatabaseServiceError(err)
 	}
 	return writeJsonResponse(w, http.StatusOK, "Favorite toggled successfully")
 }
 
 func (srv *server) handleGetTags(w http.ResponseWriter, r *http.Request, log sLog) error {
-	categories, err := srv.store.GetTags()
+	categories, err := srv.db.GetTags()
 	if err != nil {
 		return newDatabaseServiceError(err)
 	}
@@ -358,7 +358,7 @@ func (srv *server) handleIndexOpenContent(w http.ResponseWriter, r *http.Request
 	if userIsAdmin(r) && strings.ToLower(strings.TrimSpace(only)) == "true" {
 		all = true
 	}
-	content, err := srv.store.GetOpenContent(all)
+	content, err := srv.db.GetOpenContent(all)
 	if err != nil {
 		return newDatabaseServiceError(err)
 	}
@@ -367,7 +367,7 @@ func (srv *server) handleIndexOpenContent(w http.ResponseWriter, r *http.Request
 
 func (srv *server) handleGetUserFavoriteOpenContent(w http.ResponseWriter, r *http.Request, log sLog) error {
 	args := facilityScopedQueryContext(r)
-	favorites, err := srv.store.GetUserFavorites(&args)
+	favorites, err := srv.db.GetUserFavorites(&args)
 	if err != nil {
 		return newDatabaseServiceError(err)
 	}
@@ -376,7 +376,7 @@ func (srv *server) handleGetUserFavoriteOpenContent(w http.ResponseWriter, r *ht
 
 func (srv *server) handleGetUserFavoriteOpenContentGroupings(w http.ResponseWriter, r *http.Request, log sLog) error {
 	args := facilityScopedQueryContext(r)
-	favorites, err := srv.store.GetUserFavoriteGroupings(&args)
+	favorites, err := srv.db.GetUserFavoriteGroupings(&args)
 	if err != nil {
 		return newDatabaseServiceError(err)
 	}
@@ -403,7 +403,7 @@ func (srv *server) handleBookmarkOpenContent(w http.ResponseWriter, r *http.Requ
 		ContentURL:            requestBody.ContentURL,
 		OpenContentProviderID: requestBody.OpenContentProviderId,
 	}
-	err = srv.store.BookmarkOpenContent(&contentParams)
+	err = srv.db.BookmarkOpenContent(&contentParams)
 	if err != nil {
 		return newDatabaseServiceError(err)
 	}
@@ -449,7 +449,7 @@ func getBodyHTML(username, facility, bodyText string) string {
 
 func (srv *server) handleGetTopFacilityOpenContent(w http.ResponseWriter, r *http.Request, log sLog) error {
 	facilityId := claimsFrom(r).FacilityID
-	topOpenContent, err := srv.store.GetTopFacilityOpenContent(int(facilityId))
+	topOpenContent, err := srv.db.GetTopFacilityOpenContent(int(facilityId))
 	if err != nil {
 		return newDatabaseServiceError(err)
 	}
@@ -462,7 +462,7 @@ func (srv *server) handleGetTopUserOpenContent(w http.ResponseWriter, r *http.Re
 	if err != nil {
 		return newInvalidIdServiceError(err, "user ID")
 	}
-	topOpenContent, err := srv.store.GetTopUserOpenContent(id, &args)
+	topOpenContent, err := srv.db.GetTopUserOpenContent(id, &args)
 	if err != nil {
 		return newDatabaseServiceError(err)
 	}
@@ -477,7 +477,7 @@ func (srv *server) handleGetTopFacilityLibraries(w http.ResponseWriter, r *http.
 	if err != nil {
 		return err
 	}
-	topLibraries, err := srv.store.GetTopFacilityLibraries(&args, int(facilityId), perPage, start, end)
+	topLibraries, err := srv.db.GetTopFacilityLibraries(&args, int(facilityId), perPage, start, end)
 	if err != nil {
 		return newDatabaseServiceError(err)
 	}
@@ -494,7 +494,7 @@ func (srv *server) handleGetVideos(w http.ResponseWriter, r *http.Request, log s
 		visibility = "visible"
 	}
 	args := facilityScopedQueryContext(r)
-	videos, err := srv.store.GetAllVideos(&args, visibility)
+	videos, err := srv.db.GetAllVideos(&args, visibility)
 	if err != nil {
 		return newInternalServerServiceError(err, "error fetching videos")
 	}
@@ -507,7 +507,7 @@ func (srv *server) handleGetVideoById(w http.ResponseWriter, r *http.Request, lo
 		return newBadRequestServiceError(err, "error reading video id")
 	}
 	user := claimsFrom(r)
-	video, err := srv.store.GetVideoByID(id, user.FacilityID)
+	video, err := srv.db.GetVideoByID(id, user.FacilityID)
 	if err != nil {
 		return newInternalServerServiceError(err, "error fetching video")
 	}
@@ -540,14 +540,14 @@ func (srv *server) handleVideoAction(w http.ResponseWriter, r *http.Request, log
 	if err != nil {
 		return newInvalidIdServiceError(err, "video_id")
 	}
-	video, err := srv.store.GetVideoByID(vidId, claims.FacilityID)
+	video, err := srv.db.GetVideoByID(vidId, claims.FacilityID)
 	if err != nil {
 		return newInvalidIdServiceError(err, "video_id")
 	}
 
 	switch r.PathValue("action") {
 	case FeatureVideoAction: // this is an admin only action, so pass the facilityID to 'feature' the content
-		isFavorited, err := srv.store.FavoriteOpenContent(vidId, video.OpenContentProviderID, userID, &facilityID)
+		isFavorited, err := srv.db.FavoriteOpenContent(vidId, video.OpenContentProviderID, userID, &facilityID)
 		if err != nil {
 			return newInternalServerServiceError(err, "error favoriting video")
 		}
@@ -561,7 +561,7 @@ func (srv *server) handleVideoAction(w http.ResponseWriter, r *http.Request, log
 		return writeJsonResponse(w, http.StatusOK, msg)
 
 	case ToggleVisibilityAction:
-		if err = srv.store.ToggleVideoVisibility(r.Context(), vidId, facilityID); err != nil {
+		if err = srv.db.ToggleVideoVisibility(r.Context(), vidId, facilityID); err != nil {
 			return newInternalServerServiceError(err, "error toggling video visibility")
 		}
 		log.auditDetails("visibility_toggled")
@@ -590,7 +590,7 @@ func (srv *server) handleGetVideoFacilityVisibility(w http.ResponseWriter, r *ht
 	if err != nil {
 		return newInvalidIdServiceError(err, "video id")
 	}
-	visibilities, err := srv.store.GetVideoFacilityVisibility(&args, id)
+	visibilities, err := srv.db.GetVideoFacilityVisibility(&args, id)
 	if err != nil {
 		log.add("video_id", id)
 		return newDatabaseServiceError(err)
@@ -633,7 +633,7 @@ func (srv *server) handlePostVideos(w http.ResponseWriter, r *http.Request, log 
 			return newBadRequestServiceError(err, "invalid video URL")
 		}
 	}
-	provider, err := srv.store.GetVideoProvider()
+	provider, err := srv.db.GetVideoProvider()
 	if err != nil {
 		return newInternalServerServiceError(err, "error fetching video provider")
 	}
@@ -652,7 +652,7 @@ func (srv *server) handleDeleteVideo(w http.ResponseWriter, r *http.Request, log
 	if err != nil {
 		return newBadRequestServiceError(err, "error reading video id")
 	}
-	if err = srv.store.DeleteVideo(id); err != nil {
+	if err = srv.db.DeleteVideo(id); err != nil {
 		return newInternalServerServiceError(err, "error deleting video")
 	}
 	return writeJsonResponse(w, http.StatusOK, "video deleted")
@@ -666,11 +666,11 @@ func (srv *server) handleFavoriteVideo(w http.ResponseWriter, r *http.Request, l
 	if err != nil {
 		return newInvalidIdServiceError(err, "video_id")
 	}
-	video, err := srv.store.GetVideoByID(vidId, claims.FacilityID)
+	video, err := srv.db.GetVideoByID(vidId, claims.FacilityID)
 	if err != nil {
 		return newInvalidIdServiceError(err, "video_id")
 	}
-	isFavorited, err := srv.store.FavoriteOpenContent(vidId, video.OpenContentProviderID, userID, nil)
+	isFavorited, err := srv.db.FavoriteOpenContent(vidId, video.OpenContentProviderID, userID, nil)
 	if err != nil {
 		return newInternalServerServiceError(err, "error favoriting video")
 	}
@@ -708,7 +708,7 @@ func (srv *server) handleGetHelpfulLinks(w http.ResponseWriter, r *http.Request,
 	if !userIsAdmin(r) {
 		onlyVisible = true
 	}
-	links, err := srv.store.GetHelpfulLinks(&args, onlyVisible)
+	links, err := srv.db.GetHelpfulLinks(&args, onlyVisible)
 	if err != nil {
 		return newInternalServerServiceError(err, "error fetching helpful links")
 	}
@@ -729,7 +729,7 @@ func (srv *server) handleAddHelpfulLink(w http.ResponseWriter, r *http.Request, 
 	args := facilityScopedQueryContext(r)
 	link.ThumbnailUrl = models.NilIfBlank(getFavicon(link.Url))
 	log.infof("Adding helpful link icon %s", models.FormatNullableString(link.ThumbnailUrl))
-	if err := srv.store.AddHelpfulLink(r.Context(), &args, &link); err != nil {
+	if err := srv.db.AddHelpfulLink(r.Context(), &args, &link); err != nil {
 		return newDatabaseServiceError(err)
 	}
 	return writeJsonResponse(w, http.StatusCreated, "Link added successfully")
@@ -746,7 +746,7 @@ func (srv *server) handleEditLink(w http.ResponseWriter, r *http.Request, log sL
 		return newInvalidIdServiceError(err, "Invalid id")
 	}
 	link.ThumbnailUrl = models.NilIfBlank(getFavicon(link.Url))
-	if err = srv.store.EditLink(r.Context(), uint(id), link); err != nil {
+	if err = srv.db.EditLink(r.Context(), uint(id), link); err != nil {
 		return newDatabaseServiceError(err)
 	}
 	return writeJsonResponse(w, http.StatusOK, link)
@@ -759,7 +759,7 @@ func (srv *server) handleToggleVisibilityStatus(w http.ResponseWriter, r *http.R
 	}
 	log.infof("Toggling visibility status for link with id %d", id)
 	args := facilityScopedQueryContext(r)
-	if err := srv.store.ToggleVisibilityStatus(r.Context(), &args, id); err != nil {
+	if err := srv.db.ToggleVisibilityStatus(r.Context(), &args, id); err != nil {
 		return newDatabaseServiceError(err)
 	}
 	return writeJsonResponse(w, http.StatusOK, "Visibility status toggled")
@@ -771,7 +771,7 @@ func (srv *server) handleGetLinkFacilityVisibility(w http.ResponseWriter, r *htt
 	if err != nil {
 		return newInvalidIdServiceError(err, "link id")
 	}
-	visibilities, err := srv.store.GetHelpfulLinkFacilityVisibility(&args, id)
+	visibilities, err := srv.db.GetHelpfulLinkFacilityVisibility(&args, id)
 	if err != nil {
 		log.add("link_id", id)
 		return newDatabaseServiceError(err)
@@ -804,7 +804,7 @@ func (srv *server) handleDeleteLink(w http.ResponseWriter, r *http.Request, log 
 	if err != nil {
 		return newInvalidIdServiceError(err, "Invalid id")
 	}
-	if err := srv.store.DeleteLink(r.Context(), uint(id)); err != nil {
+	if err := srv.db.DeleteLink(r.Context(), uint(id)); err != nil {
 		return newDatabaseServiceError(err)
 	}
 	return writeJsonResponse(w, http.StatusOK, "Link deleted successfully")
@@ -817,11 +817,11 @@ func (srv *server) handleAddUserActivity(w http.ResponseWriter, r *http.Request,
 	if err != nil {
 		return newInvalidIdServiceError(err, "Invalid id")
 	}
-	link, err := srv.store.GetLinkFromId(uint(linkID))
+	link, err := srv.db.GetLinkFromId(uint(linkID))
 	if err != nil {
 		return newDatabaseServiceError(err)
 	}
-	openContentProviderID, err := srv.store.GetHelpfulLinkOpenContentProviderId()
+	openContentProviderID, err := srv.db.GetHelpfulLinkOpenContentProviderId()
 	if err != nil {
 		return newDatabaseServiceError(err)
 	}
@@ -830,7 +830,7 @@ func (srv *server) handleAddUserActivity(w http.ResponseWriter, r *http.Request,
 	activity.FacilityID = claims.FacilityID
 	activity.ContentID = link.ID
 	activity.OpenContentProviderID = openContentProviderID
-	srv.store.CreateContentActivity(link.Url, &activity)
+	srv.db.CreateContentActivity(link.Url, &activity)
 	return writeJsonResponse(w, http.StatusOK, map[string]string{
 		"url": link.Url,
 	})
@@ -847,11 +847,11 @@ func (srv *server) handleFavoriteLink(w http.ResponseWriter, r *http.Request, lo
 	if !userIsAdmin(r) {
 		facilityID = nil
 	}
-	link, err := srv.store.GetLinkFromId(uint(linkID))
+	link, err := srv.db.GetLinkFromId(uint(linkID))
 	if err != nil {
 		return newDatabaseServiceError(err)
 	}
-	if _, err := srv.store.FavoriteOpenContent(int(linkID), link.OpenContentProviderID, uint(userID), facilityID); err != nil {
+	if _, err := srv.db.FavoriteOpenContent(int(linkID), link.OpenContentProviderID, uint(userID), facilityID); err != nil {
 		return newDatabaseServiceError(err)
 	}
 	return writeJsonResponse(w, http.StatusOK, "Link favorite toggled successfully")

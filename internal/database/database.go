@@ -1,5 +1,6 @@
-// Package database connects to core's Postgres database, which Open Content
-// shares, with the same settings core uses.
+// Package database is Open Content's database: its connections to core's
+// Postgres database, which Open Content shares, with the same settings core
+// uses, its migrations and seed, and every query.
 package database
 
 import (
@@ -16,6 +17,16 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 )
+
+// DB is Open Content's database connection, with its queries. The queries
+// moved from core's database package unchanged (EN-192). A method that takes
+// ctx records the caller as the create or update user; one without writes no
+// user.
+type DB struct{ *gorm.DB }
+
+func NewDB(db *gorm.DB) *DB {
+	return &DB{db}
+}
 
 // DSN is the database's connection string: APP_DSN, else one built from
 // DB_HOST, DB_PORT, DB_USER, DB_PASSWORD and DB_NAME, as core builds it.

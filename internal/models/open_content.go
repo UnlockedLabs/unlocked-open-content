@@ -66,3 +66,10 @@ type OpenContentParams struct {
 	ContentID             uint   `json:"content_id"`
 	OpenContentProviderID uint   `json:"open_content_provider_id"`
 }
+
+// ContentVisits is how many visits a library or video had.
+type ContentVisits struct {
+	ContentID uint
+	Title     string
+	Visits    int64
+}

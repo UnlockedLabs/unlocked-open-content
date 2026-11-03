@@ -1,4 +1,4 @@
-package opencontent
+package database
 
 import (
 	"context"
@@ -19,8 +19,8 @@ import (
 // added. It moved from core's dev seeder (`make seed`), which runs it after
 // adding core's facilities and users. Each run adds more; a failed run adds
 // nothing.
-func SeedDev(ctx context.Context, db *gorm.DB) error {
-	if err := seedDev(ctx, db, time.Now()); err != nil {
+func (db *DB) SeedDev(ctx context.Context) error {
+	if err := seedDev(ctx, db.DB, time.Now()); err != nil {
 		return err
 	}
 	log.Info("Seeded the sample Open Content data")

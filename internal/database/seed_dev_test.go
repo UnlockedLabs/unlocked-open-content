@@ -1,4 +1,4 @@
-package opencontent
+package database
 
 import (
 	"fmt"
@@ -17,7 +17,7 @@ func TestSeedDev(t *testing.T) {
 	require.NoError(t, db.Exec(`CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT NOT NULL, role TEXT NOT NULL, facility_id INTEGER, deleted_at DATETIME)`).Error)
 
 	require.NoError(t, db.Create(&models.OpenContentProvider{Title: models.StringPtr(models.Youtube), Url: models.YoutubeApi}).Error)
-	require.ErrorContains(t, seedDev(t.Context(), db, time.Now()), "run core's seeder first")
+	require.ErrorContains(t, seedDev(t.Context(), db.DB, time.Now()), "run core's seeder first")
 	var count int64
 	require.NoError(t, db.Model(&models.Video{}).Count(&count).Error)
 	require.Zero(t, count, "a failed run adds nothing")
@@ -29,12 +29,12 @@ func TestSeedDev(t *testing.T) {
 
 	// A failure partway through adds nothing.
 	require.NoError(t, db.Migrator().RenameTable("open_content_favorites", "favorites_away"))
-	require.Error(t, seedDev(t.Context(), db, time.Now()))
+	require.Error(t, seedDev(t.Context(), db.DB, time.Now()))
 	require.NoError(t, db.Model(&models.Video{}).Count(&count).Error)
 	require.Zero(t, count, "a failed run adds nothing")
 	require.NoError(t, db.Migrator().RenameTable("favorites_away", "open_content_favorites"))
 
-	require.NoError(t, seedDev(t.Context(), db, time.Now()))
+	require.NoError(t, seedDev(t.Context(), db.DB, time.Now()))
 
 	var videos []models.Video
 	require.NoError(t, db.Find(&videos).Error)

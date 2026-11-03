@@ -11,11 +11,11 @@ import (
 
 	"github.com/UnlockedLabs/unlocked-contracts/jobs"
 
+	"github.com/UnlockedLabs/unlocked-open-content/internal/database"
 	"github.com/UnlockedLabs/unlocked-open-content/internal/models"
 	"github.com/nats-io/nats.go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gorm.io/gorm"
 )
 
 // The worker reads these messages. The routes' messages are the ones
@@ -118,7 +118,7 @@ func TestScheduleJobs(t *testing.T) {
 			pub := &published{}
 			s := &fakeScheduler{cron: map[string][]func(){}}
 
-			scheduleJobs(s, &jobPublisher{store: &store{db: db}, publish: pub.publish}, tt.dev)
+			scheduleJobs(s, &jobPublisher{db: db, publish: pub.publish}, tt.dev)
 
 			// Each scheduled task publishes its own job.
 			run := func(tasks []func()) []string {
@@ -149,7 +149,7 @@ func TestScheduleJobsBadSchedule(t *testing.T) {
 	pub := &published{}
 	s := &fakeScheduler{cron: map[string][]func(){}}
 
-	scheduleJobs(s, &jobPublisher{store: &store{db: db}, publish: pub.publish}, false)
+	scheduleJobs(s, &jobPublisher{db: db, publish: pub.publish}, false)
 
 	assert.Equal(t, []string{"0 6-20 * * *"}, slices.Collect(maps.Keys(s.cron)))
 	for _, task := range s.atStart {
@@ -158,7 +158,7 @@ func TestScheduleJobsBadSchedule(t *testing.T) {
 	assert.Equal(t, []string{"tasks.scrape_kiwix", "tasks.retry_video_downloads", "tasks.sync_video_metadata"}, pub.subjects)
 }
 
-func createProvider(t *testing.T, db *gorm.DB, title string, enabled bool) *models.OpenContentProvider {
+func createProvider(t *testing.T, db *database.DB, title string, enabled bool) *models.OpenContentProvider {
 	t.Helper()
 	p := &models.OpenContentProvider{Title: &title, Url: "https://" + strings.ToLower(title) + ".example", CurrentlyEnabled: enabled}
 	require.NoError(t, db.Create(p).Error)
@@ -170,7 +170,7 @@ func TestJobPublisherRun(t *testing.T) {
 	createProvider(t, db, models.Youtube, false)
 	kiwix := createProvider(t, db, models.Kiwix, true)
 	var msgs []*nats.Msg
-	p := &jobPublisher{store: &store{db: db}, publish: func(m *nats.Msg) error {
+	p := &jobPublisher{db: db, publish: func(m *nats.Msg) error {
 		msgs = append(msgs, m)
 		return nil
 	}}
