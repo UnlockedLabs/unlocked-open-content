@@ -26,14 +26,25 @@ jobs:
           check-latest: true
       - run: go install golang.org/x/vuln/cmd/govulncheck@v1.9.0
 
+      # govulncheck exits 3 when it finds vulnerabilities, and with another
+      # non-zero code when it couldn't check, such as a module download error.
+      # Only the first is reported as vulnerabilities, and only it goes to Slack.
       - name: Run govulncheck
         id: scan
         run: |
-          set -o pipefail
-          "$(go env GOPATH)/bin/govulncheck" ./... | tee govulncheck.txt
+          set +e
+          "$(go env GOPATH)/bin/govulncheck" ./... > govulncheck.txt 2>&1
+          code=$?
+          cat govulncheck.txt
+          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+          case $code in
+            0) ;;
+            3) echo "::error::govulncheck found vulnerabilities"; exit 1 ;;
+            *) echo "::error::govulncheck couldn't finish (exit $code), so nothing was checked. Re-run the job."; exit 1 ;;
+          esac
 
       - name: Tell Slack
-        if: failure() && steps.scan.outcome == 'failure'
+        if: failure() && steps.scan.outputs.exit_code == '3'
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
           REPO: ${{ github.repository }}
