@@ -19,6 +19,9 @@ import (
 	"github.com/UnlockedLabs/unlocked-contracts/features"
 	"github.com/UnlockedLabs/unlocked-contracts/identity"
 	"github.com/UnlockedLabs/unlocked-contracts/users"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/prometheus/client_golang/prometheus/testutil"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
@@ -423,6 +426,29 @@ func TestSecurityHeaders(t *testing.T) {
 		require.Equal(t, "max-age=31536000; includeSubDomains", resp.header.Get("Strict-Transport-Security"), path)
 		require.Equal(t, "strict-origin-when-cross-origin", resp.header.Get("Referrer-Policy"), path)
 	}
+}
+
+// Each request is counted under its route's pattern, as core counted it,
+// including the ones a check refuses, and /api/metrics serves the counts.
+func TestMetrics(t *testing.T) {
+	ts, client := newRouteTest(t)
+	const route = "/api/libraries/{id}"
+	ok := testutil.ToFloat64(responseStatus.WithLabelValues(route, http.MethodGet, "200"))
+	refused := testutil.ToFloat64(errorCount.WithLabelValues("/api/libraries", http.MethodGet, "401"))
+
+	for _, id := range []string{"1", "2"} {
+		resp := call(t, ts, client, facAdminClaims, http.MethodGet, "/api/libraries/"+id, nil)
+		require.Equal(t, http.StatusOK, resp.status, resp.body)
+	}
+	resp := call(t, ts, client, residentClaims, http.MethodGet, "/api/libraries?visibility=hidden", nil)
+	require.Equal(t, http.StatusUnauthorized, resp.status, resp.body)
+
+	assert.Equal(t, ok+2, testutil.ToFloat64(responseStatus.WithLabelValues(route, http.MethodGet, "200")), "one series for every library")
+	assert.Equal(t, refused+1, testutil.ToFloat64(errorCount.WithLabelValues("/api/libraries", http.MethodGet, "401")))
+
+	rec := httptest.NewRecorder()
+	promhttp.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/metrics", nil))
+	assert.Contains(t, rec.Body.String(), `http_requests_total{path="/api/libraries/{id}"}`)
 }
 
 // withFeatures returns the claims with every feature on except the ones left

@@ -22,6 +22,7 @@ import (
 	"github.com/go-co-op/gocron/v2"
 	"github.com/nats-io/nats.go"
 	"github.com/pressly/goose/v3"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	log "github.com/sirupsen/logrus"
 	"gorm.io/gorm"
 )
@@ -39,10 +40,10 @@ const ledgerTable = "public.goose_db_version_opencontent"
 var migrations embed.FS
 
 // NewHandler serves Open Content's routes, each behind requireLogin and its
-// access checks, and its answers to core's questions on
-// /internal/v1/open-content/, which the ingress never routes, to callers with
-// token, the site's secret core also has. A failure to reach AWS or NATS is
-// an error.
+// access checks, its metrics on /api/metrics for Prometheus, and its answers
+// to core's questions on /internal/v1/open-content/, which the ingress never
+// routes, to callers with token, the site's secret core also has. A failure to
+// reach AWS or NATS is an error.
 func NewHandler(ctx context.Context, db *gorm.DB, nc *nats.Conn, requireLogin func(http.Handler) http.Handler, token string) (http.Handler, error) {
 	srv := &server{
 		store:  &store{db: db},
@@ -62,6 +63,7 @@ func NewHandler(ctx context.Context, db *gorm.DB, nc *nats.Conn, requireLogin fu
 
 	mux := http.NewServeMux()
 	mux.Handle("/api/", newRouter(srv.routes(), requireLogin))
+	mux.Handle("GET /api/metrics", promhttp.Handler())
 	mux.Handle("/internal/v1/open-content/", api.NewHandler(NewAPI(db), token))
 	return mux, nil
 }

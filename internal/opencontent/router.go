@@ -40,13 +40,13 @@ const (
 )
 
 // newRouter serves routes, each behind requireLogin and its access and
-// feature checks. requireLogin checks the session and puts the caller's
-// identity.Claims in the request's context, as identity.SessionChecker's
-// Require does.
+// feature checks, and records each one's metrics. requireLogin checks the
+// session and puts the caller's identity.Claims in the request's context, as
+// identity.SessionChecker's Require does.
 func newRouter(routes []route, requireLogin func(http.Handler) http.Handler) http.Handler {
 	mux := http.NewServeMux()
 	for _, rt := range routes {
-		mux.Handle(rt.Pattern, requireLogin(guard(rt)))
+		mux.Handle(rt.Pattern, observe(rt.Pattern, requireLogin(guard(rt))))
 	}
 	return securityHeaders(mux)
 }
