@@ -140,7 +140,7 @@ and deploy through the deploy workflow. Only staging may use `latest`.
 
 ## Vulnerability alerts
 
-`govulncheck` runs on every push and every Monday, and blocks PRs. A failure
-on any branch posts to Slack through the `SLACK_WEBHOOK_URL` secret, the same
-alert unlocked-core's PR scan sends. Without the secret, a failure shows only
+`govulncheck` runs on every PR, as unlocked-core's scan does. Vulnerabilities
+block the PR and post to #unlockedv2-alerts through the `SLACK_WEBHOOK_URL`
+secret, with the same message core sends. Without the secret, they show only
 as a red check.
