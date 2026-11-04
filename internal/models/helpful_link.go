@@ -1,0 +1,36 @@
+package models
+
+import "gorm.io/gorm"
+
+type HelpfulLink struct {
+	DatabaseFields
+	Title                 string  `gorm:"size:255;not null" json:"title"`
+	Description           string  `gorm:"size:255;not null" json:"description"`
+	Url                   string  `gorm:"size:255;not null" json:"url"`
+	VisibilityStatus      bool    `gorm:"->" json:"visibility_status"`
+	OpenContentProviderID uint    `json:"open_content_provider_id"`
+	ThumbnailUrl          *string `gorm:"size:255;" json:"thumbnail_url"`
+}
+
+func (HelpfulLink) TableName() string { return "helpful_links" }
+
+func (hl *HelpfulLink) BeforeCreate(tx *gorm.DB) error {
+	if err := hl.DatabaseFields.BeforeCreate(tx); err != nil {
+		return err
+	}
+	hl.UpdateUserID = nil
+
+	var id int
+	if hl.OpenContentProviderID == 0 {
+		if err := tx.Table("open_content_providers").Select("id").Where("title = ? ", HelpfulLinks).Scan(&id).Error; err != nil {
+			return err
+		}
+		hl.OpenContentProviderID = uint(id)
+	}
+	return nil
+}
+
+type HelpfulLinkResp struct {
+	HelpfulLink
+	OpenContentMeta
+}

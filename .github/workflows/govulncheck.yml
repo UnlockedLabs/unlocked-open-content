@@ -1,15 +1,11 @@
 name: govulncheck
 
 # Checks the code, its dependencies and the Go version it builds with against
-# the Go vulnerability database. It runs on every push, and every Monday so main
-# is checked for vulnerabilities published since its last push. When main fails
-# and the repository can see a SLACK_WEBHOOK_URL secret, it posts to Slack.
+# the Go vulnerability database on every PR, as unlocked-core's PR scan does.
+# Vulnerabilities block the PR and, when the repository can see a
+# SLACK_WEBHOOK_URL secret, post to #unlockedv2-alerts.
 on:
-  push:
-    branches: ['**']
-  schedule:
-    - cron: '0 14 * * 1'
-  workflow_dispatch:
+  pull_request:
 
 permissions:
   contents: read
@@ -18,6 +14,7 @@ jobs:
   govulncheck:
     name: govulncheck
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -28,20 +25,65 @@ jobs:
           # cached on the runner.
           check-latest: true
       - run: go install golang.org/x/vuln/cmd/govulncheck@v1.9.0
-      - run: '"$(go env GOPATH)/bin/govulncheck" ./...'
+
+      # govulncheck exits 3 when it finds vulnerabilities, and with another
+      # non-zero code when it couldn't check, such as a module download error.
+      # Only the first is reported as vulnerabilities, and only it goes to Slack.
+      - name: Run govulncheck
+        id: scan
+        run: |
+          set +e
+          "$(go env GOPATH)/bin/govulncheck" ./... > govulncheck.txt 2>&1
+          code=$?
+          cat govulncheck.txt
+          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+          case $code in
+            0) ;;
+            3) echo "::error::govulncheck found vulnerabilities"; exit 1 ;;
+            *) echo "::error::govulncheck couldn't finish (exit $code), so nothing was checked. Re-run the job."; exit 1 ;;
+          esac
 
       - name: Tell Slack
-        if: failure() && github.ref == 'refs/heads/main'
+        if: failure() && steps.scan.outputs.exit_code == '3'
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-          TEXT: >-
-            ${{ github.repository }}: govulncheck failed on main.
-            ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          PR_BRANCH: ${{ github.event.pull_request.head.ref }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
         run: |
           if [[ -z "$SLACK_WEBHOOK_URL" ]]; then
             echo "::notice::SLACK_WEBHOOK_URL isn't set, so nothing was posted to Slack"
             exit 0
           fi
-          jq -n --arg text "$TEXT" '{text: $text}' \
+          details=$(head -c 2000 govulncheck.txt)
+          if [[ $(wc -c < govulncheck.txt) -gt 2000 ]]; then
+            details+="... (truncated, see full output in workflow logs)"
+          fi
+          text=$(cat <<EOF
+          :rotating_light: *SECURITY VULNERABILITIES DETECTED* :rotating_light:
+
+          Repository: $REPO
+          PR: #$PR_NUMBER - $PR_TITLE
+          Author: $PR_AUTHOR
+          Branch: $PR_BRANCH
+
+          This PR contains Go security vulnerabilities and has been blocked from merging until fixed.
+
+          *Vulnerability Details:*
+          $details
+
+          :wrench: *Actions needed:*
+          1. Update affected dependencies: \`go get -u <package>@<safe-version>\`
+          2. Push updates to the PR
+
+          *PR Link:* $PR_URL
+          EOF
+          )
+          jq -n --arg text "$text" \
+            '{channel: "#unlockedv2-alerts", username: "Security Bot", icon_emoji: ":warning:", text: $text}' \
             | curl --fail --silent --show-error --max-time 10 \
-                -H 'Content-Type: application/json' --data @- "$SLACK_WEBHOOK_URL"
+                -H 'Content-Type: application/json' --data @- "$SLACK_WEBHOOK_URL" \
+            || echo "::warning::Failed to send the Slack notification"

@@ -1,13 +1,18 @@
 # The image is named after this folder, which is the repo's name.
 IMAGE := $(notdir $(CURDIR))
 
-.PHONY: run worker test lint build
+.PHONY: run worker migrate test lint build
 
+# Open Content's routes live at the root (/api/...), like core's, so serve
+# runs with no PATH_PREFIX.
 run:
-	PATH_PREFIX=/$(IMAGE) go run ./cmd/app serve
+	go run ./cmd/app serve
 
 worker:
 	go run ./cmd/app worker
+
+migrate:
+	go run ./cmd/app migrate
 
 test:
 	go test -race ./...

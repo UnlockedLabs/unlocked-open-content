@@ -12,7 +12,7 @@ import (
 
 func newHandler(t *testing.T, prefix string, v Version) http.Handler {
 	t.Helper()
-	h, err := NewHandler(prefix, v)
+	h, err := NewHandler(prefix, v, http.NotFoundHandler())
 	if err != nil {
 		t.Fatalf("NewHandler(%q) error = %v", prefix, err)
 	}
@@ -33,7 +33,8 @@ func TestVersionRoute(t *testing.T) {
 		{name: "prefix with trailing slash", prefix: "/example/", method: http.MethodGet, path: "/example/api/version", wantStatus: http.StatusOK},
 		{name: "prefix without leading slash", prefix: "example", method: http.MethodGet, path: "/example/api/version", wantStatus: http.StatusOK},
 		{name: "outside the prefix", prefix: "/example", method: http.MethodGet, path: "/api/version", wantStatus: http.StatusNotFound},
-		{name: "wrong method", prefix: "/example", method: http.MethodPost, path: "/example/api/version", wantStatus: http.StatusMethodNotAllowed},
+		// Any other method goes to the app, which has no such route.
+		{name: "wrong method", prefix: "/example", method: http.MethodPost, path: "/example/api/version", wantStatus: http.StatusNotFound},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -79,6 +80,24 @@ func TestHealthcheckRoute(t *testing.T) {
 	}
 }
 
+// Every other path goes to the app's routes.
+func TestAppRoutes(t *testing.T) {
+	app := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("app " + r.URL.Path))
+	})
+	h, err := NewHandler("", Version{}, app)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"/api/libraries", "/internal/v1/open-content/top-libraries"} {
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
+		if want := "app " + path; w.Body.String() != want {
+			t.Fatalf("GET %s = %q, want %q", path, w.Body.String(), want)
+		}
+	}
+}
+
 func TestCleanPrefix(t *testing.T) {
 	tests := []struct {
 		prefix  string
@@ -107,7 +126,7 @@ func TestCleanPrefix(t *testing.T) {
 				if err == nil {
 					t.Fatalf("cleanPrefix(%q) = %q, want an error", tt.prefix, got)
 				}
-				if _, err := NewHandler(tt.prefix, Version{}); err == nil {
+				if _, err := NewHandler(tt.prefix, Version{}, http.NotFoundHandler()); err == nil {
 					t.Fatalf("NewHandler(%q) error = nil, want one", tt.prefix)
 				}
 				return
@@ -121,7 +140,7 @@ func TestCleanPrefix(t *testing.T) {
 
 func TestServe(t *testing.T) {
 	t.Run("bad prefix", func(t *testing.T) {
-		err := Serve(context.Background(), "127.0.0.1:0", "/ex{x}", Version{})
+		err := Serve(context.Background(), "127.0.0.1:0", "/ex{x}", Version{}, http.NotFoundHandler())
 		if err == nil || !strings.Contains(err.Error(), "path prefix") {
 			t.Fatalf("Serve() error = %v, want a path prefix error", err)
 		}
@@ -132,7 +151,7 @@ func TestServe(t *testing.T) {
 			t.Fatal(err)
 		}
 		t.Cleanup(func() { _ = ln.Close() })
-		err = Serve(context.Background(), ln.Addr().String(), "/example", Version{})
+		err = Serve(context.Background(), ln.Addr().String(), "/example", Version{}, http.NotFoundHandler())
 		if err == nil || !strings.Contains(err.Error(), "listen on") {
 			t.Fatalf("Serve() error = %v, want a listen error", err)
 		}
@@ -140,7 +159,7 @@ func TestServe(t *testing.T) {
 	t.Run("stops cleanly when ctx is canceled", func(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
-		if err := Serve(ctx, "127.0.0.1:0", "/example", Version{}); err != nil {
+		if err := Serve(ctx, "127.0.0.1:0", "/example", Version{}, http.NotFoundHandler()); err != nil {
 			t.Fatalf("Serve() error = %v, want nil", err)
 		}
 	})
