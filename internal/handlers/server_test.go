@@ -1,8 +1,10 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -103,4 +105,36 @@ func TestHelpfulSortOrderConcurrent(t *testing.T) {
 	}
 	require.NoError(t, json.NewDecoder(request(handle(srv.handleGetHelpfulLinks), http.MethodGet, "").Body).Decode(&resp))
 	assert.Equal(t, "title", resp.Data.SortOrder)
+}
+
+// Library proxy requests share one transport, so they reuse a connection to
+// Kiwix instead of each leaving one open.
+func TestKiwixProxyReusesConnections(t *testing.T) {
+	var mu sync.Mutex
+	conns := 0
+	kiwix := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("ok"))
+	}))
+	kiwix.Config.ConnState = func(_ net.Conn, state http.ConnState) {
+		if state == http.StateNew {
+			mu.Lock()
+			conns++
+			mu.Unlock()
+		}
+	}
+	kiwix.Start()
+	t.Cleanup(kiwix.Close)
+
+	srv := &server{dev: true}
+	library := &models.LibraryProxyPO{ID: 1, Path: "/content/algebra", BaseUrl: kiwix.URL}
+	for range 5 {
+		ctx := context.WithValue(t.Context(), libraryKey, library)
+		r := httptest.NewRequestWithContext(ctx, http.MethodGet, "/api/proxy/libraries/1/content/algebra/style.css", nil)
+		w := httptest.NewRecorder()
+		srv.handleForwardKiwixProxy(w, r)
+		require.Equal(t, http.StatusOK, w.Code)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	assert.Equal(t, 1, conns, "connections opened to Kiwix")
 }

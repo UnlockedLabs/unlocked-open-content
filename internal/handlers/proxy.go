@@ -40,6 +40,17 @@ const (
 // not recorded as visits.
 var resourceRegExpression = regexp.MustCompile(`\.(js|css|png|jpg|jpeg|gif|svg|ico|woff|ttf|map|webp|otf|vtt|webm|json|woff2|pdf)(\?|%3F|$)`)
 
+// kiwixTransport carries every library proxy request, so they share one pool
+// of connections to Kiwix. It is the default transport's settings, including
+// closing connections idle for 90 seconds, with more idle connections kept
+// per host, as every request goes to the same Kiwix.
+var kiwixTransport = func() *http.Transport {
+	t := http.DefaultTransport.(*http.Transport).Clone()
+	t.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS12}
+	t.MaxIdleConnsPerHost = 100
+	return t
+}()
+
 func (srv *server) videoProxyMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		user := claimsFrom(r)
@@ -221,10 +232,7 @@ func (srv *server) handleForwardKiwixProxy(w http.ResponseWriter, r *http.Reques
 			pr.Out.Header.Set("X-Forwarded-For", r.RemoteAddr)
 			pr.Out.Header.Set("X-Forwarded-Proto", scheme)
 		},
-		Transport: &http.Transport{
-			Proxy:           http.ProxyFromEnvironment,
-			TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12, InsecureSkipVerify: false},
-		},
+		Transport: kiwixTransport,
 		ModifyResponse: func(res *http.Response) error {
 			contentType := res.Header.Get("Content-Type")
 			if contentType == "text/html" || contentType == "" {
