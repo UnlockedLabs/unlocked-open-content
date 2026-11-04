@@ -1,10 +1,18 @@
 package handlers
 
 import (
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/UnlockedLabs/unlocked-contracts/identity"
 	api "github.com/UnlockedLabs/unlocked-contracts/opencontent"
+	"github.com/UnlockedLabs/unlocked-contracts/users"
 	"github.com/UnlockedLabs/unlocked-open-content/internal/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -58,4 +66,41 @@ func TestCreateContentActivityAndNotifyWS(t *testing.T) {
 		id := visit("/viewer/videos/1")
 		assert.Equal(t, []api.Notification{{UserID: 7, Event: "visits", ActivityID: id}}, notify.sent)
 	})
+}
+
+// Admins can change the helpful-links sort order while others read it. Run
+// with -race.
+func TestHelpfulSortOrderConcurrent(t *testing.T) {
+	db := newTestDB(t)
+	seedCore(t, db)
+	srv := &server{db: db}
+	admin := &identity.Claims{UserID: 3, Role: users.FacilityAdmin, FacilityID: 2}
+	request := func(h http.Handler, method, body string) *httptest.ResponseRecorder {
+		r := httptest.NewRequestWithContext(identity.NewContext(t.Context(), admin), method, "/api/helpful-links", strings.NewReader(body))
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		return w
+	}
+
+	var wg sync.WaitGroup
+	for i := range 20 {
+		wg.Go(func() {
+			w := request(handle(srv.changeSortOrder), http.MethodPut, fmt.Sprintf(`{"sort_order": "order-%d"}`, i))
+			assert.Equal(t, http.StatusOK, w.Code)
+		})
+		wg.Go(func() {
+			w := request(handle(srv.handleGetHelpfulLinks), http.MethodGet, "")
+			assert.Equal(t, http.StatusOK, w.Code)
+		})
+	}
+	wg.Wait()
+
+	request(handle(srv.changeSortOrder), http.MethodPut, `{"sort_order": "title"}`)
+	var resp struct {
+		Data struct {
+			SortOrder string `json:"sort_order"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.NewDecoder(request(handle(srv.handleGetHelpfulLinks), http.MethodGet, "").Body).Decode(&resp))
+	assert.Equal(t, "title", resp.Data.SortOrder)
 }

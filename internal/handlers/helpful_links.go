@@ -7,14 +7,34 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"sync"
 
 	"github.com/UnlockedLabs/unlocked-open-content/internal/models"
 	"github.com/sirupsen/logrus"
 )
 
-// helpfulSortOrder is each facility's helpful-links sort order. It is kept in
-// memory only, as it was in core.
-var helpfulSortOrder = make(map[uint]string)
+// sortOrders is each facility's helpful-links sort order. It is kept in memory
+// only, as it was in core. Requests read and write it at once, so mu guards
+// it. The zero value is ready to use.
+type sortOrders struct {
+	mu     sync.RWMutex
+	orders map[uint]string
+}
+
+func (s *sortOrders) set(facilityID uint, order string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.orders == nil {
+		s.orders = make(map[uint]string)
+	}
+	s.orders[facilityID] = order
+}
+
+func (s *sortOrders) get(facilityID uint) string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.orders[facilityID]
+}
 
 func (srv *server) changeSortOrder(w http.ResponseWriter, r *http.Request, log sLog) error {
 	type reqBody struct {
@@ -25,7 +45,7 @@ func (srv *server) changeSortOrder(w http.ResponseWriter, r *http.Request, log s
 		return newJSONReqBodyServiceError(err)
 	}
 	facilityID := claimsFrom(r).FacilityID
-	helpfulSortOrder[facilityID] = req.SortOrder
+	srv.helpfulSortOrder.set(facilityID, req.SortOrder)
 	return writeJsonResponse(w, http.StatusOK, "Sort order changed successfully")
 }
 
@@ -43,7 +63,7 @@ func (srv *server) handleGetHelpfulLinks(w http.ResponseWriter, r *http.Request,
 		SortOrder string                   `json:"sort_order"`
 		Links     []models.HelpfulLinkResp `json:"helpful_links"`
 		Meta      models.PaginationMeta    `json:"meta"`
-	}{SortOrder: helpfulSortOrder[claimsFrom(r).FacilityID], Links: links, Meta: args.IntoMeta()}
+	}{SortOrder: srv.helpfulSortOrder.get(claimsFrom(r).FacilityID), Links: links, Meta: args.IntoMeta()}
 	return writeJsonResponse(w, http.StatusOK, respSort)
 }
 

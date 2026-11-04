@@ -41,6 +41,8 @@ type server struct {
 	// client calls Kiwix's search and Google's suggestions.
 	client *http.Client
 	dev    bool
+	// helpfulSortOrder is each facility's helpful-links sort order.
+	helpfulSortOrder sortOrders
 }
 
 // clientTimeout caps each call client makes, so a slow Kiwix or Google can't
