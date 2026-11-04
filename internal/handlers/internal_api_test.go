@@ -1,4 +1,4 @@
-package opencontent
+package handlers
 
 import (
 	"testing"
@@ -59,7 +59,7 @@ func TestKnowledgeCenterAnswers(t *testing.T) {
 			VALUES (?, ?, ?, ?, 1, ?, ?)`, a.facilityID, a.userID, a.providerID, a.contentID, a.requestTS, a.stopTS).Error)
 	}
 
-	oc := NewAPI(db)
+	oc := newAPI(db)
 	ctx := t.Context()
 	fid := uint(facilityID)
 	start, end := time.Date(2026, 1, 15, 0, 0, 0, 0, time.UTC), time.Date(2026, 1, 17, 0, 0, 0, 0, time.UTC)
@@ -122,7 +122,7 @@ func TestFacilityContentAnswers(t *testing.T) {
 		require.NoError(t, db.Exec(stmt.sql, stmt.args...).Error, stmt.sql)
 	}
 
-	content, err := NewAPI(db).FacilityContent(t.Context(), []uint{north, reading, favorites, visibility, empty})
+	content, err := newAPI(db).FacilityContent(t.Context(), []uint{north, reading, favorites, visibility, empty})
 	require.NoError(t, err)
 	require.Equal(t, map[uint]api.FacilityContent{
 		north:      {Activities: 1, Favorites: 1, VisibilityStatuses: 1},
@@ -136,7 +136,7 @@ func TestFacilityContentAnswers(t *testing.T) {
 // and is 0 with no visits, as it was when Go averaged the rows.
 func TestAvgSessionMinutes(t *testing.T) {
 	db := newTestDB(t)
-	oc := NewAPI(db)
+	oc := newAPI(db)
 	avg, err := oc.AvgSessionMinutes(t.Context(), api.Window{})
 	require.NoError(t, err)
 	require.Zero(t, avg)

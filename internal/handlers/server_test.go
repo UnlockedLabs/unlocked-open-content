@@ -1,4 +1,4 @@
-package opencontent
+package handlers
 
 import (
 	"testing"

@@ -20,6 +20,19 @@ One binary, one image:
 | `app seed-dev` | Local only (`APP_ENV=dev`): adds sample videos, favorites and activity for core's residents. Core's `make seed` runs it. |
 | `app migrate-reset` | Local only (`APP_ENV=dev`): rolls back the migrations. Core's `make migrate-fresh` runs it before its own reset. |
 
+## Code
+
+Laid out like core's backend:
+
+| Package | What it holds |
+|---|---|
+| `cmd/app` | The commands above. |
+| `internal/models` | The tables as Go types, and the shapes the routes read and answer with. |
+| `internal/database` | The connection, migrations, seed and every query, on `database.DB`. |
+| `internal/handlers` | The routes, their access checks, the content proxies, metrics, and the answers to core's questions (`internal_api.go`). |
+| `internal/tasks` | The worker: its jobs and their schedule. |
+| `internal/server` | The HTTP server: health check, version, graceful stop. |
+
 ## Run it locally
 
 Core's `make dev` builds and runs all of Open Content from this checkout,
@@ -61,7 +74,7 @@ Settings, all from the environment:
   `identity.SessionChecker` from unlocked-contracts, which asks core for the
   user's claims, feature flags included. The routes then run core's checks in
   core's order, with core's answers: department admin, admin, then the
-  route's features (`internal/opencontent/router.go`).
+  route's features (`internal/handlers/middleware.go`).
 - **Core's questions:** core's dashboard, reports, facility list, Knowledge
   Center and demo seed ask Open Content through
   `unlocked-contracts/opencontent`. This service answers them on
@@ -99,13 +112,13 @@ needs no password of its own.
 
 ## Tests
 
-- `internal/opencontent/routes_test.go` pins every route's status, JSON,
+- `internal/handlers/routes_test.go` pins every route's status, JSON,
   access level and feature flags against the saved responses in
-  `internal/opencontent/testdata/routes`, which came unchanged from core.
+  `internal/handlers/testdata/routes`, which came unchanged from core.
   After an intended change, regenerate them and review the diff:
 
   ```sh
-  go test ./internal/opencontent -run 'TestRoute' -update
+  go test ./internal/handlers -run 'TestRoute' -update
   ```
 
 - The job tests run against a fake Kiwix, a fake core upload endpoint and a

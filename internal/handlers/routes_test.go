@@ -1,4 +1,4 @@
-package opencontent
+package handlers
 
 import (
 	"bytes"
@@ -33,7 +33,7 @@ import (
 //
 // Regenerate the saved responses after an intended change with:
 //
-//	go test ./internal/opencontent -run 'TestRoute' -update
+//	go test ./internal/handlers -run 'TestRoute' -update
 
 var updateGolden = flag.Bool("update", false, "rewrite the saved responses in testdata/routes")
 

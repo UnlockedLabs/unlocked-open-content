@@ -15,7 +15,7 @@ import (
 
 	"github.com/UnlockedLabs/unlocked-contracts/identity"
 	"github.com/UnlockedLabs/unlocked-open-content/internal/database"
-	"github.com/UnlockedLabs/unlocked-open-content/internal/opencontent"
+	"github.com/UnlockedLabs/unlocked-open-content/internal/handlers"
 	"github.com/UnlockedLabs/unlocked-open-content/internal/server"
 	"github.com/UnlockedLabs/unlocked-open-content/internal/tasks"
 	"github.com/nats-io/nats.go"
@@ -74,7 +74,7 @@ func serve(ctx context.Context) error {
 	}
 	defer closeAll(db, nc)
 	sessions := identity.NewSessionChecker(os.Getenv("KRATOS_PUBLIC_URL"), os.Getenv("APP_URL"), nil)
-	app, err := opencontent.NewHandler(ctx, db, nc, sessions.Require, token)
+	app, err := handlers.NewHandler(ctx, db, nc, sessions.Require, token)
 	if err != nil {
 		return err
 	}

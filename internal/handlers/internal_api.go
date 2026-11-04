@@ -1,4 +1,4 @@
-package opencontent
+package handlers
 
 import (
 	"context"
@@ -13,8 +13,8 @@ import (
 // database.
 type openContentAPI struct{ db *database.DB }
 
-// NewAPI is Open Content's answers to core, reading db.
-func NewAPI(db *database.DB) api.OpenContent {
+// newAPI is Open Content's answers to core, reading db.
+func newAPI(db *database.DB) api.OpenContent {
 	return openContentAPI{db: db}
 }
 
