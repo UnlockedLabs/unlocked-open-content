@@ -39,6 +39,10 @@ type VideoService struct {
 	s3Svc                 *s3.Client
 }
 
+// thumbnailTimeout caps each thumbnail download and upload, so one that
+// hangs can't use up the whole job.
+const thumbnailTimeout = time.Minute
+
 // videosDir is the mounted videos folder that syncVideoMetadata reads. Tests
 // point it at a temp dir.
 var videosDir = "/videos/"
@@ -56,7 +60,7 @@ func NewVideoService(prov *models.OpenContentProvider, db *database.DB, body map
 	}
 	return &VideoService{
 		BaseUrl:               prov.Url,
-		Client:                &http.Client{},
+		Client:                &http.Client{Timeout: thumbnailTimeout},
 		Body:                  body,
 		OpenContentProviderID: prov.ID,
 		db:                    db,
@@ -174,8 +178,8 @@ func (yt *VideoService) syncVideoMetadata(ctx context.Context) error {
 	return nil
 }
 
-func (yt *VideoService) downloadAndHostThumbnail(yt_id, url string) (string, error) {
-	req, err := http.NewRequest(http.MethodGet, url, nil)
+func (yt *VideoService) downloadAndHostThumbnail(ctx context.Context, yt_id, url string) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		log.Errorf("error creating request: %v", err)
 		return "", err
@@ -224,7 +228,7 @@ func (yt *VideoService) downloadAndHostThumbnail(yt_id, url string) (string, err
 		log.Errorf("error closing writer: %v", err)
 		return "", err
 	}
-	req, err = http.NewRequest(http.MethodPost, os.Getenv("APP_URL")+"/upload", body)
+	req, err = http.NewRequestWithContext(ctx, http.MethodPost, os.Getenv("APP_URL")+"/upload", body)
 	if err != nil {
 		log.Errorf("error creating upload request: %v", err)
 		return "", err
@@ -398,7 +402,7 @@ func (yt *VideoService) fetchAndSaveInitialVideoInfo(ctx context.Context, vidUrl
 		return nil, nil, err
 	}
 	log.Println("info: ", result.Info)
-	thumbnail, err := yt.downloadAndHostThumbnail(result.Info.ID, result.Info.Thumbnail)
+	thumbnail, err := yt.downloadAndHostThumbnail(ctx, result.Info.ID, result.Info.Thumbnail)
 	if err != nil {
 		thumbnail = "/youtube.png"
 	}

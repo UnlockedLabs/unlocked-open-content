@@ -2,6 +2,7 @@ package tasks
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -19,8 +20,8 @@ const (
 	MinImgSize = 150
 )
 
-func (ks *KiwixService) IntoLibrary(entry models.Entry, providerId uint) *models.Library {
-	url, thumbnailURL := ks.ParseUrls(entry.Title, entry.Links)
+func (ks *KiwixService) IntoLibrary(ctx context.Context, entry models.Entry, providerId uint) *models.Library {
+	url, thumbnailURL := ks.ParseUrls(ctx, entry.Title, entry.Links)
 	return &models.Library{
 		OpenContentProviderID: providerId,
 		ExternalID:            models.StringPtr(entry.ID),
@@ -32,7 +33,7 @@ func (ks *KiwixService) IntoLibrary(entry models.Entry, providerId uint) *models
 	}
 }
 
-func (ks *KiwixService) downloadAndHostThumbnailImg(lib, thumbnail string) (string, error) {
+func (ks *KiwixService) downloadAndHostThumbnailImg(ctx context.Context, lib, thumbnail string) (string, error) {
 	imgUrl, err := url.JoinPath(ks.BaseUrl, thumbnail)
 	if err != nil {
 		log.Errorf("error joining URL: %v", err)
@@ -50,7 +51,7 @@ func (ks *KiwixService) downloadAndHostThumbnailImg(lib, thumbnail string) (stri
 	finalURL := parsedURL.String()
 	log.Infof("downloading thumbnail image from URL: %s", finalURL)
 
-	req, err := http.NewRequest(http.MethodGet, finalURL, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, finalURL, nil)
 	if err != nil {
 		log.Errorf("error creating request: %v", err)
 		return "", err
@@ -113,7 +114,7 @@ func (ks *KiwixService) downloadAndHostThumbnailImg(lib, thumbnail string) (stri
 	}
 
 	uploadURL := os.Getenv("APP_URL") + "/upload"
-	req, err = http.NewRequest(http.MethodPost, uploadURL, body)
+	req, err = http.NewRequestWithContext(ctx, http.MethodPost, uploadURL, body)
 	if err != nil {
 		log.Errorf("error creating upload request: %v", err)
 		return "", err
@@ -152,9 +153,9 @@ func (ks *KiwixService) downloadAndHostThumbnailImg(lib, thumbnail string) (stri
 	return urlRes.Data.URL, nil
 }
 
-func (ks *KiwixService) thumbnailExists(lib string) bool {
+func (ks *KiwixService) thumbnailExists(ctx context.Context, lib string) bool {
 	thumbnailURL := os.Getenv("APP_URL") + "/api/photos/" + lib + ".png"
-	req, err := http.NewRequest(http.MethodHead, thumbnailURL, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodHead, thumbnailURL, nil)
 	if err != nil {
 		log.Errorf("error creating request: %v", err)
 		return false
@@ -176,7 +177,7 @@ func (ks *KiwixService) thumbnailExists(lib string) bool {
 	return true
 }
 
-func (ks *KiwixService) ParseUrls(externId string, links []models.Link) (string, string) {
+func (ks *KiwixService) ParseUrls(ctx context.Context, externId string, links []models.Link) (string, string) {
 	var url string
 	var thumbnailURL string
 	for _, link := range links {
@@ -184,8 +185,8 @@ func (ks *KiwixService) ParseUrls(externId string, links []models.Link) (string,
 			url = link.Href
 		}
 		if strings.Split(link.Type, "/")[0] == "image" || strings.Contains(link.Href, "catalog/v2/illustration") {
-			if !ks.thumbnailExists(externId) {
-				if thumbnail, err := ks.downloadAndHostThumbnailImg(externId, link.Href); err == nil {
+			if !ks.thumbnailExists(ctx, externId) {
+				if thumbnail, err := ks.downloadAndHostThumbnailImg(ctx, externId, link.Href); err == nil {
 					thumbnailURL = thumbnail
 				} else {
 					thumbnailURL = "/kiwix.jpg"

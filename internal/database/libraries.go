@@ -105,7 +105,7 @@ func (db *DB) GetAllLibraries(args *models.QueryContext, visibility string) ([]m
 		}
 		tx = tx.Group("libraries.id, fvs.visibility_status").Order("favorite_count DESC")
 	default:
-		tx = tx.Order(args.OrderClause("libraries.created_at desc"))
+		tx = tx.Order(args.OrderClause("libraries"))
 	}
 	if !args.All {
 		tx = tx.Limit(args.PerPage).Offset(args.CalcOffset())

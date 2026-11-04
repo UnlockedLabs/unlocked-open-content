@@ -2,10 +2,12 @@ package tasks
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/UnlockedLabs/unlocked-open-content/internal/models"
 )
@@ -207,6 +209,29 @@ func TestImportLibrariesEmptyCatalog(t *testing.T) {
 	}
 	if n != 1 {
 		t.Errorf("%d libraries left, want 1", n)
+	}
+}
+
+// A Kiwix that never answers can't hold the job past its deadline.
+func TestImportLibrariesStopsAtDeadline(t *testing.T) {
+	db := newTestDB(t)
+	kiwix := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-r.Context().Done():
+		case <-time.After(5 * time.Second):
+		}
+	}))
+	t.Cleanup(kiwix.Close)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	ks := NewKiwixService(kiwixProvider(1, kiwix.URL), db, map[string]any{"job_id": "job-1"})
+	if err := ks.ImportLibraries(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("ImportLibraries = %v, want context.DeadlineExceeded", err)
+	}
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Errorf("ImportLibraries took %v after its deadline", elapsed)
 	}
 }
 

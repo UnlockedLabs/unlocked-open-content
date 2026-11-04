@@ -236,6 +236,7 @@ func TestRoutes(t *testing.T) {
 		{"libraries_resident_featured", residentClaims, http.MethodGet, "/api/libraries?visibility=featured", nil, http.StatusOK},
 		{"libraries_admin_search_and_tag", facAdminClaims, http.MethodGet, "/api/libraries?visibility=all&search=bio&tags=1", nil, http.StatusOK},
 		{"libraries_admin_paged", facAdminClaims, http.MethodGet, "/api/libraries?visibility=all&page=2&per_page=1&order_by=title", nil, http.StatusOK},
+		{"libraries_admin_bad_order", facAdminClaims, http.MethodGet, "/api/libraries?visibility=all&order_by=title%3Bdrop%20table%20libraries--", nil, http.StatusOK},
 		{"library_by_id", residentClaims, http.MethodGet, "/api/libraries/1", nil, http.StatusOK},
 		{"library_by_id_bad_id", residentClaims, http.MethodGet, "/api/libraries/abc", nil, http.StatusBadRequest},
 		{"library_by_id_missing", residentClaims, http.MethodGet, "/api/libraries/999", nil, http.StatusBadRequest},
@@ -266,6 +267,7 @@ func TestRoutes(t *testing.T) {
 			map[string]any{"name": "Lesson 1", "content_url": "/api/proxy/libraries/1/content/algebra_fr/A/Lesson_1", "open_content_provider_id": 1}, http.StatusOK},
 		{"bookmark_bad_id", residentClaims, http.MethodPut, "/api/open-content/abc/bookmark", map[string]any{}, http.StatusBadRequest},
 		{"favorites", residentClaims, http.MethodGet, "/api/open-content/favorites", nil, http.StatusOK},
+		{"favorites_bad_order", residentClaims, http.MethodGet, "/api/open-content/favorites?order_by=created_at&order=asc%3Bdrop%20table%20videos--", nil, http.StatusOK},
 		{"favorite_groupings", residentClaims, http.MethodGet, "/api/open-content/favorite-groupings", nil, http.StatusOK},
 		{"request_content_bad_body", residentClaims, http.MethodPost, "/api/open-content/request-content", "not an object", http.StatusBadRequest},
 

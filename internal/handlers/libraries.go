@@ -67,7 +67,11 @@ func (srv *server) handleGetQuerySuggestions(w http.ResponseWriter, r *http.Requ
 	log.add("search_query", query)
 	escapedQuery := url.QueryEscape(query)
 	searchUrl := fmt.Sprintf("https://suggestqueries.google.com/complete/search?safe=on&client=firefox&q=%s", escapedQuery)
-	resp, err := http.Get(searchUrl)
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, searchUrl, nil)
+	if err != nil {
+		return newInternalServerServiceError(err, "unable to create new request to google_suggest")
+	}
+	resp, err := srv.client.Do(req)
 	if err != nil {
 		return newInternalServerServiceError(err, "error executing request to google_suggest")
 	}
@@ -142,7 +146,7 @@ func (srv *server) handleSearchOpenContent(w http.ResponseWriter, r *http.Reques
 		queryParams.Add("format", "xml")
 		queryParams.Add("pattern", search)
 		kiwixSearchURL := fmt.Sprintf("%s/search?start=%d&pageLength=%d&%s", models.KiwixLibraryUrl, nextPage, perPage, queryParams.Encode())
-		request, err := http.NewRequest(http.MethodGet, kiwixSearchURL, nil)
+		request, err := http.NewRequestWithContext(r.Context(), http.MethodGet, kiwixSearchURL, nil)
 		log.add("kiwix_search_url", kiwixSearchURL)
 		if err != nil {
 			return newInternalServerServiceError(err, "unable to create new request to kiwix")

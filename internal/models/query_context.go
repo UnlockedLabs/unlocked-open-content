@@ -59,13 +59,21 @@ func (q QueryContext) CalcOffset() int {
 	return int(math.Abs(float64((q.Page - 1) * q.PerPage)))
 }
 
-// OrderClause is the request's order, or fallback when it has none.
-func (q QueryContext) OrderClause(fallback string) string {
-	val := q.OrderBy + " " + q.Order
-	if val == " " || q.OrderBy == "" {
-		return fallback
+// sortColumns are the columns a request can order a list by.
+var sortColumns = []string{"title", "created_at"}
+
+// OrderClause is the request's order on table, or newest first when the
+// request has none or asks for a column or direction not allowed. OrderBy and
+// Order come straight from the request, so only allowed values reach the SQL.
+func (q QueryContext) OrderClause(table string) string {
+	order := q.Order
+	if order == "" {
+		order = "asc"
 	}
-	return val
+	if !slices.Contains(sortColumns, q.OrderBy) || (order != "asc" && order != "desc") {
+		return table + ".created_at desc"
+	}
+	return table + "." + q.OrderBy + " " + order
 }
 
 func (q QueryContext) SearchQuery() string {

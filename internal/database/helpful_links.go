@@ -40,7 +40,7 @@ func (db *DB) GetHelpfulLinks(args *models.QueryContext, onlyVisible bool) ([]mo
 		tx = tx.Joins("LEFT JOIN open_content_favorites f ON f.content_id = helpful_links.id AND f.open_content_provider_id = helpful_links.open_content_provider_id").
 			Group("helpful_links.id, fvs.visibility_status").Order("COUNT(f.id) DESC")
 	default:
-		tx = tx.Order(args.OrderClause("helpful_links.created_at desc"))
+		tx = tx.Order(args.OrderClause("helpful_links"))
 	}
 
 	if err := tx.Count(&args.Total).Error; err != nil {

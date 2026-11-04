@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/UnlockedLabs/unlocked-open-content/internal/database"
 	"github.com/UnlockedLabs/unlocked-open-content/internal/models"
@@ -16,6 +17,9 @@ import (
 const (
 	KiwixCatalogUrl = "/catalog/v2/entries?lang=eng&start=0&count="
 	maxLibraries    = 1000
+	// kiwixTimeout caps each request to Kiwix or core, so one that hangs
+	// can't use up the whole job.
+	kiwixTimeout = time.Minute
 )
 
 type KiwixService struct {
@@ -29,20 +33,19 @@ type KiwixService struct {
 
 func NewKiwixService(openContentProvider *models.OpenContentProvider, db *database.DB, params map[string]any) *KiwixService {
 	url := fmt.Sprintf("%s%s%d", openContentProvider.Url, KiwixCatalogUrl, maxLibraries)
-	client := http.Client{}
 	return &KiwixService{
 		OpenContentProviderId: openContentProvider.ID,
 		BaseUrl:               openContentProvider.Url,
 		Url:                   url,
 		params:                params,
-		Client:                &client,
+		Client:                &http.Client{Timeout: kiwixTimeout},
 		db:                    db,
 	}
 }
 
 func (ks *KiwixService) ImportLibraries(ctx context.Context) error {
 	log.Infoln("Importing libraries from Kiwix using the follwing url: ", ks.Url)
-	req, err := http.NewRequest(http.MethodGet, ks.Url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, ks.Url, nil)
 	if err != nil {
 		log.Errorf("error creating request: %v", err)
 		return err
@@ -99,7 +102,7 @@ func (ks *KiwixService) ImportLibraries(ctx context.Context) error {
 
 func (ks *KiwixService) UpdateOrInsertLibrary(ctx context.Context, entry models.Entry, providerId uint) error {
 	log.Infof("Attempting to insert or update library from Kiwix: %v", entry.Title)
-	library := ks.IntoLibrary(entry, providerId)
+	library := ks.IntoLibrary(ctx, entry, providerId)
 	if err := ks.db.UpsertLibrary(ctx, library); err != nil {
 		log.Errorln("Error updating or inserting library: ", err)
 		return err

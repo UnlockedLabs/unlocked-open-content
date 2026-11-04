@@ -38,10 +38,14 @@ type server struct {
 	sesClient    *sesv2.Client
 	presigner    *s3.PresignClient
 	s3Bucket     string
-	// client calls Kiwix's search.
+	// client calls Kiwix's search and Google's suggestions.
 	client *http.Client
 	dev    bool
 }
+
+// clientTimeout caps each call client makes, so a slow Kiwix or Google can't
+// hold a request open.
+const clientTimeout = 30 * time.Second
 
 // NewHandler serves Open Content's routes, each behind requireLogin and its
 // access checks, its metrics on /api/metrics for Prometheus, and its answers
@@ -53,7 +57,7 @@ func NewHandler(ctx context.Context, db *database.DB, nc *nats.Conn, requireLogi
 		db:     db,
 		notify: natsNotifier{nc},
 		nats:   nc,
-		client: &http.Client{},
+		client: &http.Client{Timeout: clientTimeout},
 		dev:    os.Getenv("APP_ENV") == "dev",
 	}
 	if err := srv.connectAWS(ctx); err != nil {
