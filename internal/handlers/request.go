@@ -25,9 +25,10 @@ func userIsAdmin(r *http.Request) bool {
 // getQueryContext resolves the facility scope for a request: a switch-capable
 // admin (sysadmin/dept admin) gets the ?facility_id they're viewing, or 0
 // (statewide) when none is selected; a facility admin is always pinned to their
-// own facility.
+// own facility. The user is always the caller, so no one can read another
+// user's favorites.
 func getQueryContext(r *http.Request) models.QueryContext {
-	var facilityID, userID uint
+	var facilityID uint
 	claims := claimsFrom(r)
 	f, err := strconv.Atoi(r.URL.Query().Get("facility_id"))
 	switch {
@@ -37,12 +38,6 @@ func getQueryContext(r *http.Request) models.QueryContext {
 		facilityID = 0
 	default:
 		facilityID = claims.FacilityID
-	}
-	u, err := strconv.Atoi(r.URL.Query().Get("user_id"))
-	if err != nil {
-		userID = claims.UserID
-	} else {
-		userID = uint(u)
 	}
 	page, perPage := getPaginationInfo(r)
 	orderBy := strings.ToLower(r.URL.Query().Get("order_by"))
@@ -60,7 +55,7 @@ func getQueryContext(r *http.Request) models.QueryContext {
 		Page:          page,
 		PerPage:       perPage,
 		FacilityID:    facilityID,
-		UserID:        userID,
+		UserID:        claims.UserID,
 		OrderBy:       orderBy,
 		Order:         order,
 		IsAdmin:       claims.IsAdmin(),

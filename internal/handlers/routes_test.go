@@ -267,6 +267,7 @@ func TestRoutes(t *testing.T) {
 			map[string]any{"name": "Lesson 1", "content_url": "/api/proxy/libraries/1/content/algebra_fr/A/Lesson_1", "open_content_provider_id": 1}, http.StatusOK},
 		{"bookmark_bad_id", residentClaims, http.MethodPut, "/api/open-content/abc/bookmark", map[string]any{}, http.StatusBadRequest},
 		{"favorites", residentClaims, http.MethodGet, "/api/open-content/favorites", nil, http.StatusOK},
+		{"favorites_other_user", residentClaims, http.MethodGet, fmt.Sprintf("/api/open-content/favorites?user_id=%d", facAdminClaims.UserID), nil, http.StatusOK},
 		{"favorites_bad_order", residentClaims, http.MethodGet, "/api/open-content/favorites?order_by=created_at&order=asc%3Bdrop%20table%20videos--", nil, http.StatusOK},
 		{"favorite_groupings", residentClaims, http.MethodGet, "/api/open-content/favorite-groupings", nil, http.StatusOK},
 		{"request_content_bad_body", residentClaims, http.MethodPost, "/api/open-content/request-content", "not an object", http.StatusBadRequest},
@@ -274,6 +275,8 @@ func TestRoutes(t *testing.T) {
 		// Activity
 		{"activity_facility", facAdminClaims, http.MethodGet, "/api/open-content/activity", nil, http.StatusOK},
 		{"activity_user", facAdminClaims, http.MethodGet, fmt.Sprintf("/api/open-content/activity/%d", residentClaims.UserID), nil, http.StatusOK},
+		{"activity_user_self", residentClaims, http.MethodGet, fmt.Sprintf("/api/open-content/activity/%d", residentClaims.UserID), nil, http.StatusOK},
+		{"activity_user_other", residentClaims, http.MethodGet, fmt.Sprintf("/api/open-content/activity/%d", facAdminClaims.UserID), nil, http.StatusForbidden},
 		{"activity_user_bad_id", facAdminClaims, http.MethodGet, "/api/open-content/activity/abc", nil, http.StatusBadRequest},
 		{"activity_libraries", facAdminClaims, http.MethodGet, "/api/libraries/activity", nil, http.StatusOK},
 

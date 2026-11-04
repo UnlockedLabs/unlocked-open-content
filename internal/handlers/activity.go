@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 )
@@ -19,6 +20,9 @@ func (srv *server) handleGetTopUserOpenContent(w http.ResponseWriter, r *http.Re
 	id, err := strconv.Atoi(r.PathValue("id"))
 	if err != nil {
 		return newInvalidIdServiceError(err, "user ID")
+	}
+	if uint(id) != claimsFrom(r).UserID && !userIsAdmin(r) {
+		return newForbiddenServiceError(errors.New("another user's activity"), "you are not authorized to view this content")
 	}
 	topOpenContent, err := srv.db.GetTopUserOpenContent(id, &args)
 	if err != nil {
