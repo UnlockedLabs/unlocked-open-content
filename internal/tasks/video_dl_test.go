@@ -468,7 +468,15 @@ func TestYtIdFromUrl(t *testing.T) {
 		{"https://www.youtube.com/watch?v=abc&t=30", "abc"},
 		{"https://youtu.be/abc", "abc"},
 		{"https://youtu.be/abc?t=30", "abc"},
+		{"https://www.youtube.com/watch?feature=share&v=abc", "abc"},
 		{"https://vimeo.com/123", ""},
+		{"https://youtu.be", ""},
+		{"https://youtu.be/", ""},
+		{"https://youtu.be?t=30", ""},
+		{"youtu.be", ""},
+		{"youtu.be/abc", ""},
+		{"https://www.youtube.com/watch", ""},
+		{"://bad", ""},
 	}
 	for _, tt := range tests {
 		if got := ytIdFromUrl(tt.url); got != tt.want {

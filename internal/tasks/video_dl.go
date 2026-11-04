@@ -8,6 +8,7 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -432,21 +433,19 @@ func (yt *VideoService) fetchAndSaveInitialVideoInfo(ctx context.Context, vidUrl
 	return &result, vid, err
 }
 
-func ytIdFromUrl(url string) string {
-	if !strings.Contains(url, "v=") && strings.Contains(url, "youtu.be") {
-		parts := strings.Split(url, "//")
-		if len(parts) < 2 {
-			return ""
-		}
-		rest := strings.Split(strings.Split(parts[1], "?")[0], "/")[1]
-		return rest
+// ytIdFromUrl is a YouTube URL's video ID: its v parameter, or the path of a
+// youtu.be link. It is "" for any other URL.
+func ytIdFromUrl(rawURL string) string {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return ""
 	}
-	if strings.Contains(url, "v=") {
-		parts := strings.Split(url, "v=")
-		if len(parts) < 2 {
-			return ""
-		}
-		return strings.Split(parts[1], "&")[0]
+	if id := u.Query().Get("v"); id != "" {
+		return id
+	}
+	if strings.TrimPrefix(u.Hostname(), "www.") == "youtu.be" {
+		id, _, _ := strings.Cut(strings.TrimPrefix(u.Path, "/"), "/")
+		return id
 	}
 	return ""
 }
