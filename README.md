@@ -139,7 +139,7 @@ needs no password of its own.
 3. Merge that PR when you want a release. It tags `vX.Y.Z`, and CI pushes
    `:X.Y.Z` to ECR.
 
-The `conventional` and `pr title` checks allow `feat`, `fix`, `perf`,
+The `conventional commits` and `pr title` checks allow `feat`, `fix`, `perf`,
 `revert`, `chore`, `docs`, `style`, `refactor`, `test`, `build` and `ci`. A
 `!` after the type marks a breaking change.
 
