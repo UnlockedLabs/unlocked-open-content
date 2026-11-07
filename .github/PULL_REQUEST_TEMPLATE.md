@@ -19,7 +19,7 @@ Please provide a brief description of the changes included in this PR.
 ## Release
 
 - **Changelog type**: `feat` (minor bump), `fix`, `perf` or `revert` (patch bump), or none (`chore`, `docs`, `style`, `refactor`, `test`, `build`, `ci`). See "Commit types" in the README.
-- **Breaking change?**: yes / no. If yes, add `!` to the title (`feat!:`) and list what sites or other repos must change.
+- **Breaking change?**: yes / no. If yes, add `!` to the title (`feat!:`). For a merge or rebase merge, also add `!` to a breaking commit subject. List what sites or other repos must change.
 
 ## Additional context
 
