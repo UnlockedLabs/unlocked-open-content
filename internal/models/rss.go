@@ -114,12 +114,13 @@ func (rss *RSS) SerializeSearchResults(libraries []Library) *OpenContentSearchRe
 		}
 		resultItem := SearchResultItem{
 			OpenContentItem: OpenContentItem{
-				ContentId:    library.ID,
-				Url:          fmt.Sprintf("/api/proxy/libraries/%d%s", library.ID, item.Link),
-				ThumbnailUrl: thumbnail,
-				Description:  item.Description.RawText,
-				Title:        item.Book.Title,
-				ContentType:  "library",
+				ContentId:             library.ID,
+				OpenContentProviderId: library.OpenContentProviderID,
+				Url:                   fmt.Sprintf("/api/proxy/libraries/%d%s", library.ID, item.Link),
+				ThumbnailUrl:          thumbnail,
+				Description:           item.Description.RawText,
+				Title:                 item.Book.Title,
+				ContentType:           "library",
 			},
 			PageTitle: item.Title,
 			Match:     MatchContent,

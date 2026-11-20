@@ -1,11 +1,14 @@
 package handlers
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"sort"
+	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -36,12 +39,50 @@ const kiwixSearchXML = `<?xml version="1.0" encoding="UTF-8"?>
   </channel>
 </rss>`
 
-// kiwixFake is a fake Kiwix search server: it answers every search with
-// kiwixSearchXML, counts the calls and keeps the last query.
+// kiwixFake is a fake Kiwix search server. By default it answers every search
+// with kiwixSearchXML. After setHits(n) it has n hits ("Hit 1" to "Hit n",
+// in that order) and, like Kiwix, honors the 0-based start and pageLength.
+// It counts the calls and keeps the last query.
 type kiwixFake struct {
-	hits atomic.Int32
-	mu   sync.Mutex
-	last url.Values
+	hits  atomic.Int32
+	mu    sync.Mutex
+	last  url.Values
+	total int
+}
+
+// setHits makes the fake have n hits for every search.
+func (k *kiwixFake) setHits(n int) {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	k.total = n
+}
+
+// query is the last search's query string values.
+func (k *kiwixFake) query() url.Values {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	return k.last
+}
+
+func (k *kiwixFake) answer(q url.Values) string {
+	k.mu.Lock()
+	total := k.total
+	k.mu.Unlock()
+	if total == 0 {
+		return kiwixSearchXML
+	}
+	start, _ := strconv.Atoi(q.Get("start"))
+	length, _ := strconv.Atoi(q.Get("pageLength"))
+	var items strings.Builder
+	for i := start; i < min(start+length, total); i++ {
+		fmt.Fprintf(&items, `<item><title>Hit %d</title><link>/content/test_lib/A/Hit_%d</link>
+			<description>hit <b>history</b></description><book><title>Test Library</title></book><wordCount>1</wordCount></item>`, i+1, i+1)
+	}
+	return fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:opensearch="http://a9.com/-/spec/opensearch/1.1/"><channel>
+<title>Search: history</title><description>d</description>
+<opensearch:totalResults>%d</opensearch:totalResults><opensearch:startIndex>%d</opensearch:startIndex>
+<opensearch:itemsPerPage>%d</opensearch:itemsPerPage>%s</channel></rss>`, total, start, length, items.String())
 }
 
 func (k *kiwixFake) Load() int32 { return k.hits.Load() }
@@ -64,7 +105,7 @@ func fakeKiwix(t *testing.T) *kiwixFake {
 		k.last = r.URL.Query()
 		k.mu.Unlock()
 		w.Header().Set("Content-Type", "application/xml")
-		_, _ = w.Write([]byte(kiwixSearchXML))
+		_, _ = w.Write([]byte(k.answer(r.URL.Query())))
 	}))
 	t.Cleanup(kiwix.Close)
 	old := models.KiwixLibraryUrl
@@ -79,6 +120,7 @@ type searchItem struct {
 	Title       string `json:"title"`
 	PageTitle   string `json:"page_title"`
 	Match       string `json:"match"`
+	ProviderID  uint   `json:"open_content_provider_id"`
 }
 
 type searchChannel struct {
@@ -223,5 +265,195 @@ func TestSearchScopeAndCategories(t *testing.T) {
 	t.Run("category: only libraries in it, no videos or links", func(t *testing.T) {
 		require.Equal(t, []string{"content/library/Test Library", "title/library/History of Rome"}, search(t, all, fmt.Sprintf("&tags=%d", tagID)))
 		require.Equal(t, []string{"test_lib"}, kiwix.books(), "Kiwix asked only for libraries in the category")
+	})
+}
+
+// searchPage is one page of a search: its items as "match/content_type/title"
+// in the order returned, and the total the page reports.
+func searchPage(t *testing.T, ts *httptest.Server, client *http.Client, c *identity.Claims, query string, page, perPage int) ([]string, int64) {
+	t.Helper()
+	resp := expectStatus(t, call(t, ts, client, c, http.MethodGet,
+		fmt.Sprintf("/api/open-content/search?search=history&page=%d&per_page=%d%s", page, perPage, query), nil), http.StatusOK)
+	var body struct {
+		Data []searchChannel `json:"data"`
+		Meta struct {
+			Total int64 `json:"total"`
+		} `json:"meta"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(resp.body), &body), resp.body)
+	var got []string
+	for _, ch := range body.Data {
+		for _, it := range ch.Items {
+			got = append(got, it.Match+"/"+it.ContentType+"/"+it.Title+"|"+it.PageTitle)
+		}
+	}
+	return got, body.Meta.Total
+}
+
+// The results are one ordered list: title matches (libraries, then videos,
+// then helpful links, each by title) then Kiwix hits in Kiwix's order. Page N
+// is a slice of that list and the total is the same on every page (EN-337).
+func TestSearchOrderAndPaging(t *testing.T) {
+	db := newTestDB(t)
+	seedCore(t, db, "Facility A")
+	ts, client := newRouteServer(t, db)
+	kiwix := fakeKiwix(t)
+	kiwix.setHits(5)
+
+	kiwixID := insertID(t, db, `INSERT INTO open_content_providers (title, url, currently_enabled) VALUES ('Kiwix', 'http://kiwix', true)`)
+	ytID := insertID(t, db, `INSERT INTO open_content_providers (title, url, currently_enabled) VALUES ('YouTube', 'http://youtube', true)`)
+	linkProvID := insertID(t, db, `INSERT INTO open_content_providers (title, url, currently_enabled) VALUES ('Links', 'http://links', true)`)
+	lib := insertID(t, db, `INSERT INTO libraries (open_content_provider_id, title, url, language) VALUES (?, 'Test Library', '/content/test_lib', 'eng')`, kiwixID)
+	zeta := insertID(t, db, `INSERT INTO libraries (open_content_provider_id, title, description, url, language) VALUES (?, 'Zeta', 'history', '/content/zeta', 'eng')`, kiwixID)
+	alpha := insertID(t, db, `INSERT INTO libraries (open_content_provider_id, title, description, url, language) VALUES (?, 'Alpha', 'history', '/content/alpha', 'eng')`, kiwixID)
+	video := insertID(t, db, `INSERT INTO videos (open_content_provider_id, title, url, external_id) VALUES (?, 'History video', '/v1', 'v1')`, ytID)
+	chanVideo := insertID(t, db, `INSERT INTO videos (open_content_provider_id, title, channel_title, url, external_id) VALUES (?, 'Cooking', 'History Channel', '/v2', 'v2')`, ytID)
+	link := insertID(t, db, `INSERT INTO helpful_links (title, description, url, open_content_provider_id) VALUES ('History link', 'x', 'https://example.org/h', ?)`, linkProvID)
+	for _, v := range []struct{ provider, content uint }{{kiwixID, lib}, {kiwixID, zeta}, {kiwixID, alpha}, {ytID, video}, {ytID, chanVideo}, {linkProvID, link}} {
+		require.NoError(t, db.Exec(`INSERT INTO facility_visibility_statuses (facility_id, open_content_provider_id, content_id, visibility_status) VALUES (?, ?, ?, true)`,
+			facilityA, v.provider, v.content).Error)
+	}
+	resident := &identity.Claims{UserID: 20, Role: users.Student, FacilityID: facilityA, FeatureAccess: features.All}
+
+	// 4 title matches (2 libraries, 1 video, 1 link: the channel-only video
+	// does not match) and 5 Kiwix hits: 9 in all, 3 per page.
+	titles := []string{"title/library/Alpha|Alpha", "title/library/Zeta|Zeta", "title/video/History video|History video"}
+	pages := [][]string{
+		titles,
+		{"title/link/History link|History link", "content/library/Test Library|Hit 1", "content/library/Test Library|Hit 2"},
+		{"content/library/Test Library|Hit 3", "content/library/Test Library|Hit 4", "content/library/Test Library|Hit 5"},
+		nil,
+	}
+	var all []string
+	for i, want := range pages {
+		got, total := searchPage(t, ts, client, resident, "", i+1, 3)
+		require.Equal(t, want, got, "page %d", i+1)
+		require.Equal(t, int64(9), total, "total on page %d", i+1)
+		all = append(all, got...)
+	}
+	require.Len(t, all, 9)
+	require.Len(t, map[string]bool{all[0]: true, all[1]: true, all[2]: true, all[3]: true, all[4]: true, all[5]: true, all[6]: true, all[7]: true, all[8]: true}, 9, "no duplicates")
+
+	t.Run("titles fill the page: Kiwix still counted, first Kiwix hit starts the next page", func(t *testing.T) {
+		got, total := searchPage(t, ts, client, resident, "", 1, 2)
+		require.Equal(t, []string{"title/library/Alpha|Alpha", "title/library/Zeta|Zeta"}, got)
+		require.Equal(t, int64(9), total)
+		require.Equal(t, "0", kiwix.query().Get("start"))
+		got, _ = searchPage(t, ts, client, resident, "", 3, 2)
+		require.Equal(t, []string{"content/library/Test Library|Hit 1", "content/library/Test Library|Hit 2"}, got)
+		require.Equal(t, "0", kiwix.query().Get("start"), "Kiwix's start is 0-based")
+		got, _ = searchPage(t, ts, client, resident, "", 4, 2)
+		require.Equal(t, []string{"content/library/Test Library|Hit 3", "content/library/Test Library|Hit 4"}, got)
+	})
+
+	t.Run("types=content: Kiwix hits only, in Kiwix's order from the first", func(t *testing.T) {
+		got, total := searchPage(t, ts, client, resident, "&types=content", 1, 3)
+		require.Equal(t, []string{"content/library/Test Library|Hit 1", "content/library/Test Library|Hit 2", "content/library/Test Library|Hit 3"}, got)
+		require.Equal(t, int64(5), total)
+	})
+
+	t.Run("library_id search skips the title search", func(t *testing.T) {
+		got, total := searchPage(t, ts, client, resident, fmt.Sprintf("&library_id=%d", lib), 2, 3)
+		require.Equal(t, []string{"content/library/Test Library|Hit 4", "content/library/Test Library|Hit 5"}, got)
+		require.Equal(t, int64(5), total)
+	})
+
+	t.Run("items carry the provider id", func(t *testing.T) {
+		channels := data[[]searchChannel](t, expectStatus(t, call(t, ts, client, resident, http.MethodGet,
+			"/api/open-content/search?search=history&page=2&per_page=3", nil), http.StatusOK))
+		require.Len(t, channels[0].Items, 3)
+		require.Equal(t, "link", channels[0].Items[0].ContentType)
+		require.Equal(t, linkProvID, channels[0].Items[0].ProviderID)
+		require.Equal(t, "content", channels[0].Items[1].Match)
+		require.Equal(t, kiwixID, channels[0].Items[1].ProviderID)
+		channels = data[[]searchChannel](t, expectStatus(t, call(t, ts, client, resident, http.MethodGet,
+			"/api/open-content/search?search=history&per_page=3", nil), http.StatusOK))
+		require.Equal(t, kiwixID, channels[0].Items[0].ProviderID)
+		require.Equal(t, ytID, channels[0].Items[2].ProviderID)
+	})
+}
+
+// A bookmark of a library page needs no earlier visit, can be removed, and
+// only covers pages of a library the resident can see (EN-337).
+func TestBookmarkLibraryPage(t *testing.T) {
+	db := newTestDB(t)
+	seedCore(t, db, "Facility A")
+	ts, client := newRouteServer(t, db)
+
+	kiwixID := insertID(t, db, `INSERT INTO open_content_providers (title, url, currently_enabled) VALUES ('Kiwix', 'http://kiwix', true)`)
+	lib := insertID(t, db, `INSERT INTO libraries (open_content_provider_id, title, url, language) VALUES (?, 'Test Library', '/content/test_lib', 'eng')`, kiwixID)
+	other := insertID(t, db, `INSERT INTO libraries (open_content_provider_id, title, url, language) VALUES (?, 'Other', '/content/other', 'eng')`, kiwixID)
+	hidden := insertID(t, db, `INSERT INTO libraries (open_content_provider_id, title, url, language) VALUES (?, 'Hidden', '/content/hidden', 'eng')`, kiwixID)
+	for id, visible := range map[uint]bool{lib: true, other: true, hidden: false} {
+		require.NoError(t, db.Exec(`INSERT INTO facility_visibility_statuses (facility_id, open_content_provider_id, content_id, visibility_status) VALUES (?, ?, ?, ?)`,
+			facilityA, kiwixID, id, visible).Error)
+	}
+	resident := &identity.Claims{UserID: 20, Role: users.Student, FacilityID: facilityA, FeatureAccess: features.All}
+	facAdmin := &identity.Claims{UserID: 11, Role: users.FacilityAdmin, FacilityID: facilityA, FeatureAccess: features.All}
+	bookmark := func(c *identity.Claims, id uint, body map[string]any) routeResponse {
+		return call(t, ts, client, c, http.MethodPut, fmt.Sprintf("/api/open-content/%d/bookmark", id), body)
+	}
+	favorites := func(userID uint) int64 {
+		var n int64
+		require.NoError(t, db.Raw(`SELECT COUNT(*) FROM open_content_favorites WHERE user_id = ?`, userID).Scan(&n).Error)
+		return n
+	}
+	page := fmt.Sprintf("/api/proxy/libraries/%d/content/test_lib/A/History", lib)
+	add := map[string]any{"open_content_provider_id": kiwixID, "name": "History page", "content_url": page}
+
+	t.Run("add with no earlier visit", func(t *testing.T) {
+		var activities int64
+		require.NoError(t, db.Raw(`SELECT COUNT(*) FROM open_content_activities`).Scan(&activities).Error)
+		require.Zero(t, activities)
+		expectStatus(t, bookmark(resident, lib, add), http.StatusOK)
+		require.Equal(t, int64(1), favorites(20))
+		var name string
+		require.NoError(t, db.Raw(`SELECT f.name FROM open_content_favorites f JOIN open_content_urls u ON u.id = f.open_content_url_id WHERE u.content_url = ?`, page).Scan(&name).Error)
+		require.Equal(t, "History page", name)
+		require.NoError(t, db.Raw(`SELECT COUNT(*) FROM open_content_activities`).Scan(&activities).Error)
+		require.Zero(t, activities, "no activity row was made")
+	})
+
+	t.Run("adding twice keeps one favorite", func(t *testing.T) {
+		expectStatus(t, bookmark(resident, lib, add), http.StatusOK)
+		require.Equal(t, int64(1), favorites(20))
+	})
+
+	t.Run("remove with the URL only", func(t *testing.T) {
+		expectStatus(t, bookmark(resident, lib, map[string]any{"open_content_provider_id": kiwixID, "content_url": page}), http.StatusOK)
+		require.Zero(t, favorites(20))
+	})
+
+	t.Run("a URL of another library is rejected", func(t *testing.T) {
+		body := map[string]any{"open_content_provider_id": kiwixID, "name": "x", "content_url": fmt.Sprintf("/api/proxy/libraries/%d/content/other/A/Page", other)}
+		expectStatus(t, bookmark(resident, lib, body), http.StatusBadRequest)
+		for _, u := range []string{"https://example.org/x", "/api/proxy/videos/1", fmt.Sprintf("/api/proxy/libraries/%d9/A", lib),
+			fmt.Sprintf("/api/proxy/libraries/%d/../%d/A", lib, other)} {
+			body["content_url"] = u
+			expectStatus(t, bookmark(resident, lib, body), http.StatusBadRequest)
+		}
+		require.Zero(t, favorites(20))
+	})
+
+	t.Run("a wrong provider id is rejected", func(t *testing.T) {
+		expectStatus(t, bookmark(resident, lib, map[string]any{"open_content_provider_id": kiwixID + 1, "name": "x", "content_url": page}), http.StatusBadRequest)
+		require.Zero(t, favorites(20))
+	})
+
+	t.Run("a hidden library is rejected for a resident", func(t *testing.T) {
+		body := map[string]any{"open_content_provider_id": kiwixID, "name": "x", "content_url": fmt.Sprintf("/api/proxy/libraries/%d/content/hidden/A/Page", hidden)}
+		expectStatus(t, bookmark(resident, hidden, body), http.StatusForbidden)
+		require.Zero(t, favorites(20))
+		expectStatus(t, bookmark(facAdmin, hidden, body), http.StatusOK)
+	})
+
+	t.Run("the library viewer's add (name only) still uses the last visit", func(t *testing.T) {
+		body := map[string]any{"open_content_provider_id": kiwixID, "name": "Viewer"}
+		expectStatus(t, bookmark(resident, lib, body), http.StatusBadRequest) // the old behavior: no visit yet
+		require.NoError(t, db.Exec(`INSERT INTO open_content_urls (content_url) VALUES ('/api/proxy/libraries/1/visited')`).Error)
+		require.NoError(t, db.Exec(`INSERT INTO open_content_activities (user_id, content_id, open_content_provider_id, facility_id, open_content_url_id, request_ts)
+			VALUES (20, ?, ?, ?, (SELECT id FROM open_content_urls WHERE content_url = '/api/proxy/libraries/1/visited'), CURRENT_TIMESTAMP)`, lib, kiwixID, facilityA).Error)
+		expectStatus(t, bookmark(resident, lib, body), http.StatusOK)
+		require.Equal(t, int64(1), favorites(20))
 	})
 }
