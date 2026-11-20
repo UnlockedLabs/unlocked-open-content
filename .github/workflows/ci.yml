@@ -6,6 +6,8 @@ name: CI
 #   push to main  -> :sha-<short>, and :latest if it's still the tip of main
 #   tag vX.Y.Z    -> :X.Y.Z
 #
+# A push to main then sets staging to the :sha- image (update-staging).
+#
 # The ECR repository has the same name as this GitHub repository. The template
 # repository itself only tests: it has no ECR repository.
 on:
@@ -124,3 +126,98 @@ jobs:
             exit 0
           fi
           docker buildx imagetools create -t "$IMAGE:latest" "$IMAGE:$IMAGE_VERSION"
+
+  # Staging follows main: commit this build's tag to staging's site file in
+  # unlocked-platform. That push starts its deploy workflow, which runs helm
+  # upgrade and this repo's migrations.
+  update-staging:
+    needs: build-and-push
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    concurrency:
+      group: update-staging
+      cancel-in-progress: false
+    steps:
+      # The unlocked-release-bot app may push to unlocked-platform's main past
+      # its review rule; that repo's deploy workflow refuses any bot push that
+      # changes more than staging's image tags.
+      - uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        id: app-token
+        with:
+          client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          owner: UnlockedLabs
+          repositories: unlocked-platform
+          permission-contents: write
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: UnlockedLabs/unlocked-platform
+          token: ${{ steps.app-token.outputs.token }}
+
+      - name: Commit the new tag to staging
+        env:
+          GH_TOKEN: ${{ github.token }}
+          APP_TOKEN: ${{ steps.app-token.outputs.token }}
+          APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
+          REPO: ${{ github.event.repository.name }}
+        run: |
+          set -euo pipefail
+          # unlocked-platform's deploy workflow only checks this push's content
+          # when github.actor is unlocked-release-bot[bot]; any other app name
+          # would skip that check instead of failing it.
+          if [[ "$APP_SLUG" != unlocked-release-bot ]]; then
+            echo "::error::expected unlocked-release-bot, got ${APP_SLUG}; unlocked-platform's content check keys on that name"
+            exit 1
+          fi
+          # The image's key in the site file is the repo name without
+          # "unlocked-", in camelCase: unlocked-open-content -> openContent.
+          KEY="$(sed -E 's/^unlocked-//; s/-([a-z])/\U\1/g' <<< "$REPO")"
+          TAG="sha-${GITHUB_SHA::7}"
+          SITE_FILE=sites/staging.yaml
+          BOT_ID="$(GH_TOKEN="$APP_TOKEN" gh api "/users/${APP_SLUG}%5Bbot%5D" --jq .id)"
+          git config user.name "${APP_SLUG}[bot]"
+          git config user.email "${BOT_ID}+${APP_SLUG}[bot]@users.noreply.github.com"
+
+          site_tag() {
+            sed -n "/^  ${KEY}:\$/,/^    tag:/ s/^    tag: *//p" "$SITE_FILE"
+          }
+
+          if [[ -z "$(site_tag)" ]]; then
+            echo "::warning::${SITE_FILE} has no images.${KEY}.tag, so staging doesn't run ${REPO} yet; nothing to update"
+            exit 0
+          fi
+
+          # Retries when another push lands on unlocked-platform's main first.
+          for attempt in 1 2 3 4 5; do
+            # A re-run of an older build must not roll staging back.
+            CURRENT="$(site_tag)"
+            if [[ "$CURRENT" == sha-* ]]; then
+              STATUS="$(gh api "repos/${GITHUB_REPOSITORY}/compare/${CURRENT#sha-}...${GITHUB_SHA}" --jq .status)"
+              if [[ "$STATUS" != ahead ]]; then
+                echo "Staging runs $CURRENT, and $TAG isn't newer ($STATUS); leaving it."
+                exit 0
+              fi
+            fi
+
+            sed -i -E "/^  ${KEY}:\$/,/^    tag:/ s/^(    tag:).*/\1 ${TAG}/" "$SITE_FILE"
+            if [[ "$(site_tag)" != "$TAG" ]]; then
+              echo "::error::couldn't set images.${KEY}.tag in ${SITE_FILE}"
+              exit 1
+            fi
+
+            git commit -qam "chore(staging): deploy ${REPO} ${TAG}" \
+              -m "https://github.com/${GITHUB_REPOSITORY}/commit/${GITHUB_SHA}"
+            if git push -q origin HEAD:main; then
+              echo "Staging set to $TAG; unlocked-platform's deploy workflow takes it from here."
+              exit 0
+            fi
+            echo "Push rejected (attempt $attempt), retrying on the new main"
+            git fetch -q origin main
+            git reset -q --hard FETCH_HEAD
+            sleep $((attempt * 5))
+          done
+          echo "::error::couldn't push to unlocked-platform's main"
+          exit 1
