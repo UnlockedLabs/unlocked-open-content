@@ -367,3 +367,32 @@ func (db *DB) BookmarkOpenContent(params *models.OpenContentParams) error {
 	}
 	return nil
 }
+
+// BookmarkLibraryPage saves a bookmark of one page of a library for the user,
+// without needing an earlier visit to the page. It does nothing when the user
+// already bookmarked that page.
+func (db *DB) BookmarkLibraryPage(userID uint, library *models.Library, name, contentURL string) error {
+	var url models.OpenContentUrl
+	if db.Where("content_url = ?", contentURL).First(&url).RowsAffected == 0 {
+		url.ContentURL = contentURL
+		if err := db.Create(&url).Error; err != nil {
+			return newCreateDBError(err, "open_content_urls")
+		}
+	}
+	var existing models.OpenContentFavorite
+	if db.Where("user_id = ? AND content_id = ? AND open_content_provider_id = ? AND open_content_url_id = ?",
+		userID, library.ID, library.OpenContentProviderID, url.ID).First(&existing).RowsAffected > 0 {
+		return nil
+	}
+	fav := models.OpenContentFavorite{
+		UserID:                userID,
+		ContentID:             library.ID,
+		OpenContentProviderID: library.OpenContentProviderID,
+		Name:                  models.NilIfBlank(name),
+		OpenContentUrlID:      &url.ID,
+	}
+	if err := db.Create(&fav).Error; err != nil {
+		return newCreateDBError(err, "open_content_favorites")
+	}
+	return nil
+}

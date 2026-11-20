@@ -2,19 +2,33 @@
   "data": [
     {
       "description": "",
-      "items": [],
+      "items": [
+        {
+          "content_id": 1,
+          "content_type": "library",
+          "description": "Algebre pour tous",
+          "match": "title",
+          "open_content_provider_id": 1,
+          "page_title": "Algebra",
+          "provider_name": "kiwix",
+          "thumbnail_url": "/thumbs/algebra.png",
+          "title": "Algebra",
+          "url": "/api/proxy/libraries/1",
+          "visibility_status": true
+        }
+      ],
       "items_per_page": "20",
       "link": "",
       "start_index": "1",
       "title": "Search: algebra",
-      "total_results": "0"
+      "total_results": "1"
     }
   ],
   "message": "",
   "meta": {
     "current_page": 1,
-    "last_page": 0,
+    "last_page": 1,
     "per_page": 20,
-    "total": 0
+    "total": 1
   }
 }
