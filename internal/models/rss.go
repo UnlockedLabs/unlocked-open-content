@@ -53,6 +53,23 @@ type OpenContentSearchResult struct {
 type SearchResultItem struct {
 	OpenContentItem
 	PageTitle string `json:"page_title"`
+	// Match is "title" when the item's title or description matched, or
+	// "content" when Kiwix found the search inside a library's pages.
+	Match string `json:"match"`
+}
+
+// Search result matches.
+const (
+	MatchTitle   = "title"
+	MatchContent = "content"
+)
+
+// SearchScope is which kinds of content a search looks in.
+type SearchScope struct {
+	Content   bool // inside library pages (Kiwix)
+	Libraries bool // library titles and descriptions
+	Videos    bool
+	Links     bool
 }
 
 func (res *OpenContentSearchResult) AppendTitleSearchResults(items []OpenContentItem) {
@@ -61,6 +78,7 @@ func (res *OpenContentSearchResult) AppendTitleSearchResults(items []OpenContent
 			SearchResultItem{
 				OpenContentItem: item,
 				PageTitle:       item.Title,
+				Match:           MatchTitle,
 			})
 	}
 }
@@ -104,6 +122,7 @@ func (rss *RSS) SerializeSearchResults(libraries []Library) *OpenContentSearchRe
 				ContentType:  "library",
 			},
 			PageTitle: item.Title,
+			Match:     MatchContent,
 		}
 		channel.Items = append(channel.Items, resultItem)
 	}

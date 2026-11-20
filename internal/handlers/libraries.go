@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/UnlockedLabs/unlocked-contracts/features"
 	"github.com/UnlockedLabs/unlocked-open-content/internal/models"
 )
 
@@ -91,6 +92,22 @@ func (srv *server) handleGetQuerySuggestions(w http.ResponseWriter, r *http.Requ
 	return err
 }
 
+// searchScope is which kinds of content a search looks in: the repeated
+// "types" param (library: library titles, content: inside library pages,
+// video, link), all of them when it is absent. Videos and helpful links also
+// need the caller's sub-feature, as their own lists do.
+func searchScope(r *http.Request) models.SearchScope {
+	types := r.URL.Query()["types"]
+	want := func(t string) bool { return len(types) == 0 || slices.Contains(types, t) }
+	claims := claimsFrom(r)
+	return models.SearchScope{
+		Content:   want("content"),
+		Libraries: want("library"),
+		Videos:    want("video") && claims.HasFeature(features.UploadVideo),
+		Links:     want("link") && claims.HasFeature(features.HelpfulLinks),
+	}
+}
+
 func (srv *server) handleSearchOpenContent(w http.ResponseWriter, r *http.Request, log sLog) error {
 	page, perPage := getPaginationInfo(r)
 	search := r.URL.Query().Get("search")
@@ -112,8 +129,9 @@ func (srv *server) handleSearchOpenContent(w http.ResponseWriter, r *http.Reques
 	// if we are on a library viewer page, we want to search
 	// only the included library, so we omit title search
 	queryCtx := facilityScopedQueryContext(r)
+	scope := searchScope(r)
 	if page == 1 && len(libraryIDs) == 0 {
-		titleSearch, err = srv.db.OpenContentTitleSearch(&queryCtx)
+		titleSearch, err = srv.db.OpenContentTitleSearch(&queryCtx, scope)
 		if err != nil {
 			log.error("error performing title search on open content")
 		}
@@ -127,9 +145,12 @@ func (srv *server) handleSearchOpenContent(w http.ResponseWriter, r *http.Reques
 		channels[0].AppendTitleSearchResults(titleSearch)
 		return writePaginatedResponse(w, http.StatusOK, channels, paginationData)
 	}
-	if len(libraryIDs) > 0 {
+	switch {
+	case !scope.Content:
+		// inside-library results not asked for: Kiwix is not searched
+	case len(libraryIDs) > 0:
 		libraries, err = srv.db.GetLibrariesByIDsAndLang(&queryCtx, libraryIDs, "eng", !userIsAdmin(r))
-	} else {
+	default:
 		libraries, err = srv.db.GetAllLibrariesByLang(&queryCtx, "eng")
 	}
 	if err != nil {
