@@ -128,7 +128,7 @@ func (srv *server) handleSearchOpenContent(w http.ResponseWriter, r *http.Reques
 		return writePaginatedResponse(w, http.StatusOK, channels, paginationData)
 	}
 	if len(libraryIDs) > 0 {
-		libraries, err = srv.db.GetLibrariesByIDsAndLang(libraryIDs, "eng")
+		libraries, err = srv.db.GetLibrariesByIDsAndLang(&queryCtx, libraryIDs, "eng", !userIsAdmin(r))
 	} else {
 		libraries, err = srv.db.GetAllLibrariesByLang(&queryCtx, "eng")
 	}

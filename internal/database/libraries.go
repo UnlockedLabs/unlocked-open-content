@@ -205,11 +205,22 @@ func (db *DB) OpenContentTitleSearch(args *models.QueryContext) ([]models.OpenCo
 	return items, nil
 }
 
-func (db *DB) GetLibrariesByIDsAndLang(ids []int, language string) ([]models.Library, error) {
+// GetLibrariesByIDsAndLang finds the libraries with these ids. With onlyVisible
+// set (residents), a library counts only when it is visible at args.FacilityID,
+// so a search by library_id can't read a library hidden there. Admins may
+// search a hidden library, as they may open it.
+func (db *DB) GetLibrariesByIDsAndLang(args *models.QueryContext, ids []int, language string, onlyVisible bool) ([]models.Library, error) {
 	var libraries []models.Library
-	tx := db.Preload("OpenContentProvider").Where("id in ?", ids)
+	tx := db.WithContext(args.Ctx).Model(&models.Library{}).Preload("OpenContentProvider").Select("libraries.*").
+		Where("libraries.id in ?", ids)
+	if onlyVisible {
+		tx = tx.Joins(`join facility_visibility_statuses fvs on fvs.open_content_provider_id = libraries.open_content_provider_id
+			and fvs.content_id = libraries.id
+			and fvs.facility_id = ?`, args.FacilityID).
+			Where("fvs.visibility_status = true")
+	}
 	if len(ids) > 1 {
-		tx.Where("language = ?", language)
+		tx = tx.Where("libraries.language = ?", language)
 	}
 	if err := tx.Find(&libraries).Error; err != nil {
 		log.Errorln("unable to find libraries with these IDs with language as ", language)
