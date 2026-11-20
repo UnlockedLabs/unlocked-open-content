@@ -173,7 +173,8 @@ func (db *DB) textMatch(search string, cols ...string) (string, any) {
 // title or description matches args.Search and that are visible at
 // args.FacilityID. scope picks which kinds to search; args.Tags (category ids)
 // keeps only libraries in those categories and drops videos and links, which
-// have no categories.
+// have no categories. Videos match on title and description, not channel. The
+// result is ordered libraries, videos, links, each by title.
 func (db *DB) OpenContentTitleSearch(args *models.QueryContext, scope models.SearchScope) ([]models.OpenContentItem, error) {
 	items := []models.OpenContentItem{}
 	visible := func(alias string) string {
@@ -187,7 +188,7 @@ func (db *DB) OpenContentTitleSearch(args *models.QueryContext, scope models.Sea
 		params  []any
 	)
 	if scope.Videos && len(args.Tags) == 0 {
-		match, arg := db.textMatch(args.Search, "v.title", "v.description", "v.channel_title")
+		match, arg := db.textMatch(args.Search, "v.title", "v.description")
 		selects = append(selects, `SELECT
 			'video' AS content_type, v.id AS content_id, v.title,
 			'/viewer/videos/' || v.id AS url,
@@ -228,7 +229,11 @@ func (db *DB) OpenContentTitleSearch(args *models.QueryContext, scope models.Sea
 	if len(selects) == 0 || args.Search == "" {
 		return items, nil
 	}
-	tx := db.WithContext(args.Ctx).Raw(strings.Join(selects, " UNION ALL "), params...)
+	// one stable order: libraries, then videos, then helpful links, each by title
+	query := `SELECT * FROM (` + strings.Join(selects, " UNION ALL ") + `) AS matches
+		ORDER BY CASE content_type WHEN 'library' THEN 0 WHEN 'video' THEN 1 ELSE 2 END,
+		LOWER(title), content_id`
+	tx := db.WithContext(args.Ctx).Raw(query, params...)
 	if err := tx.Scan(&items).Error; err != nil {
 		log.Errorln("Unable to perform content search")
 		return nil, newNotFoundDBError(err, "content search")
