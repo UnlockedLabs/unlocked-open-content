@@ -136,9 +136,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-    concurrency:
-      group: update-staging
-      cancel-in-progress: false
     steps:
       # The unlocked-release-bot app may push to unlocked-platform's main past
       # its review rule; that repo's deploy workflow refuses any bot push that
