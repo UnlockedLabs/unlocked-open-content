@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/UnlockedLabs/unlocked-open-content/internal/models"
 	log "github.com/sirupsen/logrus"
@@ -154,19 +155,48 @@ func (db *DB) GetLibraryByID(id int) (*models.Library, error) {
 	return &library, nil
 }
 
-// textMatch is a WHERE clause matching the search against the text in cols,
-// and its argument. Postgres uses English full-text search, as the search
-// always has; other databases (the SQLite tests) use a substring match.
-func (db *DB) textMatch(search string, cols ...string) (string, any) {
+// textMatch is a condition matching the search against the text in cols, and
+// its arguments. On Postgres a typed word matches a word in the text when it is
+// the same word in English ("histories" finds "History") or its start ("bas"
+// finds "based"), so results show while the resident is still typing.
+// Punctuation counts as a space, so "based.cooking" is two words. Other
+// databases (the SQLite tests) use a substring match.
+func (db *DB) textMatch(search string, cols ...string) (string, []any) {
 	parts := make([]string, len(cols))
 	for i, col := range cols {
 		parts[i] = "COALESCE(" + col + ", '')"
 	}
 	text := strings.Join(parts, " || ' ' || ")
-	if db.Name() == "postgres" {
-		return "to_tsvector('english', " + text + ") @@ plainto_tsquery('english', ?)", search
+	if db.Name() != "postgres" {
+		return "LOWER(" + text + ") LIKE ?", []any{"%" + strings.ToLower(search) + "%"}
 	}
-	return "LOWER(" + text + ") LIKE ?", "%" + strings.ToLower(search) + "%"
+	prefixes := prefixQuery(search)
+	if prefixes == "" {
+		return "FALSE", nil
+	}
+	words := "regexp_replace(" + text + ", '[^[:alnum:]]+', ' ', 'g')"
+	return "(to_tsvector('english', " + words + ") @@ plainto_tsquery('english', ?)" +
+		" OR to_tsvector('simple', " + words + ") @@ to_tsquery('simple', ?))", []any{search, prefixes}
+}
+
+// prefixQuery turns "bio hist" into the tsquery "bio:* & hist:*": every word
+// must start a word in the text. Anything but letters and digits splits words,
+// so nothing typed can break the tsquery syntax.
+func prefixQuery(search string) string {
+	words := strings.FieldsFunc(strings.ToLower(search), func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
+	})
+	for i, w := range words {
+		words[i] = w + ":*"
+	}
+	return strings.Join(words, " & ")
+}
+
+// titleRank is a select column, 0 when the search matches the title in col and
+// 1 when only the description matched, so title matches sort first.
+func (db *DB) titleRank(search, col string) (string, []any) {
+	match, args := db.textMatch(search, col)
+	return "CASE WHEN " + match + " THEN 0 ELSE 1 END AS title_rank", args
 }
 
 // OpenContentTitleSearch finds the libraries, videos and helpful links whose
@@ -187,21 +217,25 @@ func (db *DB) OpenContentTitleSearch(args *models.QueryContext, scope models.Sea
 		selects []string
 		params  []any
 	)
+	// Each SELECT's placeholders run in order: the title rank, the facility
+	// in the join, then the match.
 	if scope.Videos && len(args.Tags) == 0 {
-		match, arg := db.textMatch(args.Search, "v.title", "v.description")
+		rank, rankArgs := db.titleRank(args.Search, "v.title")
+		match, matchArgs := db.textMatch(args.Search, "v.title", "v.description")
 		selects = append(selects, `SELECT
 			'video' AS content_type, v.id AS content_id, v.title,
 			'/viewer/videos/' || v.id AS url,
 			v.thumbnail_url, v.description, fvs.visibility_status AS visibility_status,
-			v.open_content_provider_id, NULL AS provider_name, v.channel_title
+			v.open_content_provider_id, NULL AS provider_name, v.channel_title, `+rank+`
 		FROM videos v `+visible("v")+`
 		WHERE v.deleted_at IS NULL AND fvs.visibility_status = true AND `+match)
-		params = append(params, args.FacilityID, arg)
+		params = append(append(append(params, rankArgs...), args.FacilityID), matchArgs...)
 	}
 	if scope.Libraries {
-		match, arg := db.textMatch(args.Search, "l.title", "l.description")
+		rank, rankArgs := db.titleRank(args.Search, "l.title")
+		match, matchArgs := db.textMatch(args.Search, "l.title", "l.description")
 		where := `l.deleted_at IS NULL AND fvs.visibility_status = true AND ` + match
-		libParams := []any{args.FacilityID, arg}
+		libParams := append(append(rankArgs, args.FacilityID), matchArgs...)
 		if len(args.Tags) > 0 {
 			where += ` AND EXISTS (SELECT 1 FROM open_content_tags t WHERE t.content_id = l.id
 				AND t.open_content_provider_id = l.open_content_provider_id AND t.tag_id IN ?)`
@@ -211,28 +245,30 @@ func (db *DB) OpenContentTitleSearch(args *models.QueryContext, scope models.Sea
 			'library' AS content_type, l.id AS content_id, l.title,
 			'/api/proxy/libraries/' || l.id AS url,
 			l.thumbnail_url, l.description, fvs.visibility_status AS visibility_status,
-			l.open_content_provider_id, 'kiwix' AS provider_name, NULL AS channel_title
+			l.open_content_provider_id, 'kiwix' AS provider_name, NULL AS channel_title, `+rank+`
 		FROM libraries l `+visible("l")+`
 		WHERE `+where)
 		params = append(params, libParams...)
 	}
 	if scope.Links && len(args.Tags) == 0 {
-		match, arg := db.textMatch(args.Search, "hl.title", "hl.description")
+		rank, rankArgs := db.titleRank(args.Search, "hl.title")
+		match, matchArgs := db.textMatch(args.Search, "hl.title", "hl.description")
 		selects = append(selects, `SELECT
 			'link' AS content_type, hl.id AS content_id, hl.title, hl.url,
 			hl.thumbnail_url, hl.description, fvs.visibility_status AS visibility_status,
-			hl.open_content_provider_id, NULL AS provider_name, NULL AS channel_title
+			hl.open_content_provider_id, NULL AS provider_name, NULL AS channel_title, `+rank+`
 		FROM helpful_links hl `+visible("hl")+`
 		WHERE hl.deleted_at IS NULL AND fvs.visibility_status = true AND `+match)
-		params = append(params, args.FacilityID, arg)
+		params = append(append(append(params, rankArgs...), args.FacilityID), matchArgs...)
 	}
 	if len(selects) == 0 || args.Search == "" {
 		return items, nil
 	}
-	// one stable order: libraries, then videos, then helpful links, each by title
+	// one stable order: libraries, then videos, then helpful links; within
+	// each, title matches before description-only matches, then by title
 	query := `SELECT * FROM (` + strings.Join(selects, " UNION ALL ") + `) AS matches
 		ORDER BY CASE content_type WHEN 'library' THEN 0 WHEN 'video' THEN 1 ELSE 2 END,
-		LOWER(title), content_id`
+		title_rank, LOWER(title), content_id`
 	tx := db.WithContext(args.Ctx).Raw(query, params...)
 	if err := tx.Scan(&items).Error; err != nil {
 		log.Errorln("Unable to perform content search")

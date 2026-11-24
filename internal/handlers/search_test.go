@@ -290,6 +290,30 @@ func searchPage(t *testing.T, ts *httptest.Server, client *http.Client, c *ident
 	return got, body.Meta.Total
 }
 
+// Within libraries, a library whose title matches comes before one that only
+// matched in its description, even when its title sorts later.
+func TestSearchRanksTitleMatchesFirst(t *testing.T) {
+	db := newTestDB(t)
+	seedCore(t, db, "Facility A")
+	ts, client := newRouteServer(t, db)
+	kiwixID := insertID(t, db, `INSERT INTO open_content_providers (title, url, currently_enabled) VALUES ('Kiwix', 'http://kiwix', true)`)
+	anatomy := insertID(t, db, `INSERT INTO libraries (open_content_provider_id, title, description, url, language) VALUES (?, 'Anatomy', 'Biology basics', '/content/anatomy', 'eng')`, kiwixID)
+	biology := insertID(t, db, `INSERT INTO libraries (open_content_provider_id, title, url, language) VALUES (?, 'Biology LibreTexts', '/content/biology', 'eng')`, kiwixID)
+	for _, lib := range []uint{anatomy, biology} {
+		require.NoError(t, db.Exec(`INSERT INTO facility_visibility_statuses (facility_id, open_content_provider_id, content_id, visibility_status) VALUES (?, ?, ?, true)`,
+			facilityA, kiwixID, lib).Error)
+	}
+	resident := &identity.Claims{UserID: 20, Role: users.Student, FacilityID: facilityA, FeatureAccess: features.All}
+
+	channels := data[[]searchChannel](t, expectStatus(t, call(t, ts, client, resident, http.MethodGet,
+		"/api/open-content/search?search=bio&types=library", nil), http.StatusOK))
+	var titles []string
+	for _, it := range channels[0].Items {
+		titles = append(titles, it.Title)
+	}
+	require.Equal(t, []string{"Biology LibreTexts", "Anatomy"}, titles)
+}
+
 // The results are one ordered list: title matches (libraries, then videos,
 // then helpful links, each by title) then Kiwix hits in Kiwix's order. Page N
 // is a slice of that list and the total is the same on every page (EN-337).
