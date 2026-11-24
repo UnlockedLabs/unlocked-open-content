@@ -371,6 +371,15 @@ func TestSearchOrderAndPaging(t *testing.T) {
 		require.Equal(t, kiwixID, channels[0].Items[0].ProviderID)
 		require.Equal(t, ytID, channels[0].Items[2].ProviderID)
 	})
+
+	t.Run("a huge page or per_page is capped instead of overflowing", func(t *testing.T) {
+		for _, q := range []string{"page=2&per_page=9223372036854775807", "page=9223372036854775807&per_page=10"} {
+			expectStatus(t, call(t, ts, client, resident, http.MethodGet, "/api/open-content/search?search=history&"+q, nil), http.StatusOK)
+			length, err := strconv.Atoi(kiwix.query().Get("pageLength"))
+			require.NoError(t, err)
+			require.LessOrEqual(t, length, 100, q)
+		}
+	})
 }
 
 // A bookmark of a library page needs no earlier visit, can be removed, and

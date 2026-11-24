@@ -117,6 +117,10 @@ func searchScope(r *http.Request) models.SearchScope {
 // title matches.
 func (srv *server) handleSearchOpenContent(w http.ResponseWriter, r *http.Request, log sLog) error {
 	page, perPage := getPaginationInfo(r)
+	// capped so the page math below can't overflow, and Kiwix is never asked
+	// for a huge page
+	perPage = min(perPage, 100)
+	page = min(page, 10000)
 	search := r.URL.Query().Get("search")
 	log.add("search", search)
 	log.info("Executing open content search")
