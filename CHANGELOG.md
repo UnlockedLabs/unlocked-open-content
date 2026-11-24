@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.0](https://github.com/UnlockedLabs/unlocked-open-content/compare/v0.1.0...v0.2.0) (2026-11-24)
+
+
+### Features
+
+* **search:** filters, ordered paging and page bookmarks for Knowledge Center search (EN-337) ([#5](https://github.com/UnlockedLabs/unlocked-open-content/issues/5)) ([a149d16](https://github.com/UnlockedLabs/unlocked-open-content/commit/a149d16204cd484f6aad494f7aa5f395bba41bf5))
+
 ## 0.1.0 (2026-11-04)
 
 
