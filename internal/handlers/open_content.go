@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html"
 	"net/http"
@@ -55,6 +56,10 @@ func (srv *server) handleBookmarkOpenContent(w http.ResponseWriter, r *http.Requ
 	if err != nil {
 		return newInvalidIdServiceError(err, "Content ID")
 	}
+	if requestBody.Name != "" && requestBody.ContentURL != "" {
+		// a page of a library, saved with no earlier visit to it
+		return srv.bookmarkLibraryPage(w, r, uint(contentID), requestBody.OpenContentProviderId, requestBody.Name, requestBody.ContentURL)
+	}
 	contentParams := models.OpenContentParams{
 		UserID:                claimsFrom(r).UserID,
 		ContentID:             uint(contentID),
@@ -64,6 +69,37 @@ func (srv *server) handleBookmarkOpenContent(w http.ResponseWriter, r *http.Requ
 	}
 	err = srv.db.BookmarkOpenContent(&contentParams)
 	if err != nil {
+		return newDatabaseServiceError(err)
+	}
+	return writeJsonResponse(w, http.StatusOK, "Bookmark toggled successfully")
+}
+
+// maxBookmarkURL is the size of the open_content_urls.content_url column.
+const maxBookmarkURL = 255
+
+// bookmarkLibraryPage bookmarks a page of library id for the caller. The URL
+// must be a page of that library's proxy, and residents can only bookmark a
+// library visible at their facility (admins may open hidden libraries).
+func (srv *server) bookmarkLibraryPage(w http.ResponseWriter, r *http.Request, id, providerID uint, name, contentURL string) error {
+	prefix := fmt.Sprintf("/api/proxy/libraries/%d", id)
+	rest, ok := strings.CutPrefix(contentURL, prefix)
+	if !ok || (rest != "" && !strings.HasPrefix(rest, "/")) || strings.Contains(contentURL, "..") ||
+		len(contentURL) > maxBookmarkURL || strings.ContainsAny(contentURL, "\r\n") {
+		return newBadRequestServiceError(errors.New("content_url is not a page of this library"), "content_url must be a page of the library")
+	}
+	queryCtx := facilityScopedQueryContext(r)
+	libraries, err := srv.db.GetLibrariesByIDsAndLang(&queryCtx, []int{int(id)}, "eng", !userIsAdmin(r))
+	if err != nil {
+		return newDatabaseServiceError(err)
+	}
+	if len(libraries) == 0 {
+		return newForbiddenServiceError(errors.New("library not visible"), "library is not available")
+	}
+	library := libraries[0]
+	if providerID != library.OpenContentProviderID {
+		return newBadRequestServiceError(errors.New("provider mismatch"), "open_content_provider_id does not match the library")
+	}
+	if err := srv.db.BookmarkLibraryPage(claimsFrom(r).UserID, &library, name, contentURL); err != nil {
 		return newDatabaseServiceError(err)
 	}
 	return writeJsonResponse(w, http.StatusOK, "Bookmark toggled successfully")

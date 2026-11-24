@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/UnlockedLabs/unlocked-open-content/internal/models"
 	log "github.com/sirupsen/logrus"
@@ -154,50 +155,121 @@ func (db *DB) GetLibraryByID(id int) (*models.Library, error) {
 	return &library, nil
 }
 
-func (db *DB) OpenContentTitleSearch(args *models.QueryContext) ([]models.OpenContentItem, error) {
-	var items []models.OpenContentItem
-	searchQuery := `SELECT
-			'video' AS content_type,
-			v.id as content_id,
-			v.title,
-			CONCAT('/viewer/videos/', v.id) as url,
-			v.thumbnail_url,
-			v.description,
-			(CASE WHEN fvs.visibility_status is null then false else fvs.visibility_status END) as visibility_status,
-			v.open_content_provider_id,
-			NULL AS provider_name,
-			v.channel_title,
-			v.created_at
-			FROM videos v
-        LEFT OUTER JOIN facility_visibility_statuses fvs
-            on fvs.open_content_provider_id = v.open_content_provider_id
-            and fvs.content_id = v.id
-            and fvs.facility_id = ?
-        WHERE fvs.visibility_status = true
-				and to_tsvector('english', concat_ws(' ', v.title, v.description, v.channel_title)) @@ plainto_tsquery('english', ?)
-		   UNION ALL
-		SELECT
-			'library' AS content_type,
-			l.id as content_id,
-			l.title,
-			CONCAT('/api/proxy/libraries/', l.id) as url,
-			l.thumbnail_url,
-			l.description,
-			CASE WHEN fvs.visibility_status IS NULL THEN false
-				ELSE fvs.visibility_status
-			END AS visibility_status,
-			l.open_content_provider_id,
-			'kiwix' AS provider_name,
-			NULL AS channel_title,
-			l.created_at
-		FROM libraries l
-		left outer join facility_visibility_statuses fvs on fvs.open_content_provider_id = l.open_content_provider_id
-			and fvs.content_id = l.id
-			and fvs.facility_id = ?
-		WHERE fvs.visibility_status = true
-			and to_tsvector('english', concat_ws(' ', l.title, l.description)) @@ plainto_tsquery('english', ?)`
+// textMatch is a condition matching the search against the text in cols, and
+// its arguments. On Postgres a typed word matches a word in the text when it is
+// the same word in English ("histories" finds "History") or its start ("bas"
+// finds "based"), so results show while the resident is still typing.
+// Punctuation counts as a space, so "based.cooking" is two words. Other
+// databases (the SQLite tests) use a substring match.
+func (db *DB) textMatch(search string, cols ...string) (string, []any) {
+	parts := make([]string, len(cols))
+	for i, col := range cols {
+		parts[i] = "COALESCE(" + col + ", '')"
+	}
+	text := strings.Join(parts, " || ' ' || ")
+	if db.Name() != "postgres" {
+		return "LOWER(" + text + ") LIKE ?", []any{"%" + strings.ToLower(search) + "%"}
+	}
+	prefixes := prefixQuery(search)
+	if prefixes == "" {
+		return "FALSE", nil
+	}
+	words := "regexp_replace(" + text + ", '[^[:alnum:]]+', ' ', 'g')"
+	return "(to_tsvector('english', " + words + ") @@ plainto_tsquery('english', ?)" +
+		" OR to_tsvector('simple', " + words + ") @@ to_tsquery('simple', ?))", []any{search, prefixes}
+}
 
-	tx := db.WithContext(args.Ctx).Raw(searchQuery, args.FacilityID, args.Search, args.FacilityID, args.Search)
+// prefixQuery turns "bio hist" into the tsquery "bio:* & hist:*": every word
+// must start a word in the text. Anything but letters and digits splits words,
+// so nothing typed can break the tsquery syntax.
+func prefixQuery(search string) string {
+	words := strings.FieldsFunc(strings.ToLower(search), func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
+	})
+	for i, w := range words {
+		words[i] = w + ":*"
+	}
+	return strings.Join(words, " & ")
+}
+
+// titleRank is a select column, 0 when the search matches the title in col and
+// 1 when only the description matched, so title matches sort first.
+func (db *DB) titleRank(search, col string) (string, []any) {
+	match, args := db.textMatch(search, col)
+	return "CASE WHEN " + match + " THEN 0 ELSE 1 END AS title_rank", args
+}
+
+// OpenContentTitleSearch finds the libraries, videos and helpful links whose
+// title or description matches args.Search and that are visible at
+// args.FacilityID. scope picks which kinds to search; args.Tags (category ids)
+// keeps only libraries in those categories and drops videos and links, which
+// have no categories. Videos match on title and description, not channel. The
+// result is ordered libraries, videos, links, each by title.
+func (db *DB) OpenContentTitleSearch(args *models.QueryContext, scope models.SearchScope) ([]models.OpenContentItem, error) {
+	items := []models.OpenContentItem{}
+	visible := func(alias string) string {
+		return `LEFT OUTER JOIN facility_visibility_statuses fvs
+			ON fvs.open_content_provider_id = ` + alias + `.open_content_provider_id
+			AND fvs.content_id = ` + alias + `.id
+			AND fvs.facility_id = ?`
+	}
+	var (
+		selects []string
+		params  []any
+	)
+	// Each SELECT's placeholders run in order: the title rank, the facility
+	// in the join, then the match.
+	if scope.Videos && len(args.Tags) == 0 {
+		rank, rankArgs := db.titleRank(args.Search, "v.title")
+		match, matchArgs := db.textMatch(args.Search, "v.title", "v.description")
+		selects = append(selects, `SELECT
+			'video' AS content_type, v.id AS content_id, v.title,
+			'/viewer/videos/' || v.id AS url,
+			v.thumbnail_url, v.description, fvs.visibility_status AS visibility_status,
+			v.open_content_provider_id, NULL AS provider_name, v.channel_title, `+rank+`
+		FROM videos v `+visible("v")+`
+		WHERE v.deleted_at IS NULL AND fvs.visibility_status = true AND `+match)
+		params = append(append(append(params, rankArgs...), args.FacilityID), matchArgs...)
+	}
+	if scope.Libraries {
+		rank, rankArgs := db.titleRank(args.Search, "l.title")
+		match, matchArgs := db.textMatch(args.Search, "l.title", "l.description")
+		where := `l.deleted_at IS NULL AND fvs.visibility_status = true AND ` + match
+		libParams := append(append(rankArgs, args.FacilityID), matchArgs...)
+		if len(args.Tags) > 0 {
+			where += ` AND EXISTS (SELECT 1 FROM open_content_tags t WHERE t.content_id = l.id
+				AND t.open_content_provider_id = l.open_content_provider_id AND t.tag_id IN ?)`
+			libParams = append(libParams, args.Tags)
+		}
+		selects = append(selects, `SELECT
+			'library' AS content_type, l.id AS content_id, l.title,
+			'/api/proxy/libraries/' || l.id AS url,
+			l.thumbnail_url, l.description, fvs.visibility_status AS visibility_status,
+			l.open_content_provider_id, 'kiwix' AS provider_name, NULL AS channel_title, `+rank+`
+		FROM libraries l `+visible("l")+`
+		WHERE `+where)
+		params = append(params, libParams...)
+	}
+	if scope.Links && len(args.Tags) == 0 {
+		rank, rankArgs := db.titleRank(args.Search, "hl.title")
+		match, matchArgs := db.textMatch(args.Search, "hl.title", "hl.description")
+		selects = append(selects, `SELECT
+			'link' AS content_type, hl.id AS content_id, hl.title, hl.url,
+			hl.thumbnail_url, hl.description, fvs.visibility_status AS visibility_status,
+			hl.open_content_provider_id, NULL AS provider_name, NULL AS channel_title, `+rank+`
+		FROM helpful_links hl `+visible("hl")+`
+		WHERE hl.deleted_at IS NULL AND fvs.visibility_status = true AND `+match)
+		params = append(append(append(params, rankArgs...), args.FacilityID), matchArgs...)
+	}
+	if len(selects) == 0 || args.Search == "" {
+		return items, nil
+	}
+	// one stable order: libraries, then videos, then helpful links; within
+	// each, title matches before description-only matches, then by title
+	query := `SELECT * FROM (` + strings.Join(selects, " UNION ALL ") + `) AS matches
+		ORDER BY CASE content_type WHEN 'library' THEN 0 WHEN 'video' THEN 1 ELSE 2 END,
+		title_rank, LOWER(title), content_id`
+	tx := db.WithContext(args.Ctx).Raw(query, params...)
 	if err := tx.Scan(&items).Error; err != nil {
 		log.Errorln("Unable to perform content search")
 		return nil, newNotFoundDBError(err, "content search")
@@ -205,11 +277,26 @@ func (db *DB) OpenContentTitleSearch(args *models.QueryContext) ([]models.OpenCo
 	return items, nil
 }
 
-func (db *DB) GetLibrariesByIDsAndLang(ids []int, language string) ([]models.Library, error) {
+// GetLibrariesByIDsAndLang finds the libraries with these ids. With onlyVisible
+// set (residents), a library counts only when it is visible at args.FacilityID,
+// so a search by library_id can't read a library hidden there. Admins may
+// search a hidden library, as they may open it.
+func (db *DB) GetLibrariesByIDsAndLang(args *models.QueryContext, ids []int, language string, onlyVisible bool) ([]models.Library, error) {
 	var libraries []models.Library
-	tx := db.Preload("OpenContentProvider").Where("id in ?", ids)
+	tx := db.WithContext(args.Ctx).Model(&models.Library{}).Preload("OpenContentProvider").Select("libraries.*").
+		Where("libraries.id in ?", ids)
+	if onlyVisible {
+		tx = tx.Joins(`join facility_visibility_statuses fvs on fvs.open_content_provider_id = libraries.open_content_provider_id
+			and fvs.content_id = libraries.id
+			and fvs.facility_id = ?`, args.FacilityID).
+			Where("fvs.visibility_status = true")
+	}
 	if len(ids) > 1 {
-		tx.Where("language = ?", language)
+		tx = tx.Where("libraries.language = ?", language)
+	}
+	if len(args.Tags) > 0 {
+		tx = tx.Where(`EXISTS (SELECT 1 FROM open_content_tags t WHERE t.content_id = libraries.id
+			AND t.open_content_provider_id = libraries.open_content_provider_id AND t.tag_id IN ?)`, args.Tags)
 	}
 	if err := tx.Find(&libraries).Error; err != nil {
 		log.Errorln("unable to find libraries with these IDs with language as ", language)
@@ -218,7 +305,8 @@ func (db *DB) GetLibrariesByIDsAndLang(ids []int, language string) ([]models.Lib
 	return libraries, nil
 }
 
-// Retrieves all libraries by langauge using the given paramenters. A way to find out the different language values is to execute
+// Retrieves all libraries by langauge using the given paramenters. args.Tags, when set, keeps only libraries
+// in those categories. A way to find out the different language values is to execute
 // an SQL query against the libraries table to see the different language values (column name is language).
 // language - the language of the library to retrieve
 func (db *DB) GetAllLibrariesByLang(args *models.QueryContext, language string) ([]models.Library, error) {
@@ -228,6 +316,10 @@ func (db *DB) GetAllLibrariesByLang(args *models.QueryContext, language string) 
 			and fvs.content_id = libraries.id
 			and fvs.facility_id = ?`, args.FacilityID).
 		Where("fvs.visibility_status = true and libraries.language = ?", language)
+	if len(args.Tags) > 0 {
+		tx = tx.Where(`EXISTS (SELECT 1 FROM open_content_tags t WHERE t.content_id = libraries.id
+			AND t.open_content_provider_id = libraries.open_content_provider_id AND t.tag_id IN ?)`, args.Tags)
+	}
 	if err := tx.Find(&libraries).Error; err != nil {
 		log.Errorln("unable to find libraries that are visible with language as ", language)
 		return nil, newNotFoundDBError(err, "libraries")
